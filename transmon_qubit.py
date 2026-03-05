@@ -7,6 +7,7 @@ from constants import h, hbar, e
 from Transmon import Transmon
 from Wavefunction import Wavefunction
 from utils import *
+from Operator import Operator
 
 def main():
     # ---- Hyper-parameters for Transmon ----
@@ -40,16 +41,34 @@ def main():
     # ---- Evolution According to Schrodinger Equation ----
     T = (2*np.pi) / omega_q # Qubit period [s]
     theta = 0.03            # Amount by which a single SFQ pulse rotates the wavefunction
-    theta_target = np.pi    # Target RY rotation
+    ry_theta_target = np.pi / 2    # Target RY rotation
     
-    N = int(np.round(theta_target / theta)) + 1
+    N = int(np.round(ry_theta_target / theta)) + 1
     
     kick_vec = [] # to store kicks
     populations = [[] for i in range(n_cut)] # to store measurement probabilities
     
-    # ---- Creating Free Evolution Unitary ----    
-    U_free = expm((-1j * transmon.H0.matrix * T) / hbar)
+    # ---- Creating Atomic Unitaries----    
+    U_free_1 = expm((-1j * transmon.H0.matrix * (1*(T/4))) / hbar)
+    U_free_2 = expm((-1j * transmon.H0.matrix * (2*(T/4))) / hbar)
+    U_free_3 = expm((-1j * transmon.H0.matrix * (3*(T/4))) / hbar)
+    U_free_4 = expm((-1j * transmon.H0.matrix * (4*(T/4))) / hbar)
     U_kick = expm((-theta/2) * (transmon.a_dagger.matrix - transmon.a.matrix))
+    
+    # ---- RY Unitary ---
+    U = np.eye(n_cut, dtype=complex)
+    for i in range(N):
+        U @= (U_free_4 @ U_kick)
+    
+    RY = Operator(matrix=U, basis="energy")
+    
+    # ---- Hadamard Unitary ----  
+    U = np.eye(n_cut, dtype=complex)
+    for i in range(N):
+        U @= (U_free_4 @ U_kick) # RY(pi/2)
+    U = U_free_2 @ U # Free evolution AFTER RY(pi/2)
+    
+    HADAMARD = Operator(matrix=U, basis="energy")
     
     # ---- Creating Our Initial Quantum State ----
     probability_amplitudes = (n_cut) * [0]
@@ -78,9 +97,8 @@ def main():
     # Store Bloch vector history for trail
     bx_hist, by_hist, bz_hist = [], [], []
 
-    for i in range(N):
-        state = state.apply(U=U_kick)
-        state = state.apply(U=U_free)
+    for i in range(100):
+        state = state.apply(U=HADAMARD.matrix)
         
         probabilities = state.get_probabilities()
         
