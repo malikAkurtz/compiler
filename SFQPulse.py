@@ -10,5 +10,5 @@ class SFQPulse():
         self.U_kick = np.expm((-theta/2) * (a_dagger-a))
         
     def apply_pulse(self, psi: Wavefunction):
-        psi_new = Wavefunction(probability_amplitudes=psi.apply(self.U_kick), basis=psi.basis)
+        psi_new = psi.apply(self.U_kick)
         

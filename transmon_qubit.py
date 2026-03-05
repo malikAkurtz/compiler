@@ -33,25 +33,33 @@ def main():
     print(transmon.alpha / (h * 1e9))
     print(f"Qubit Frequency [GHz]: ")
     print(transmon.fq / 1e9)
+    print(f"Qubit Angular Frequency [rad/s]:")
+    omega_q = transmon.fq * (2*np.pi)
+    print(omega_q)
+    
+    # ---- Evolution According to Schrodinger Equation ----
+    T = (2*np.pi) / omega_q # Qubit period [s]
+    theta = 0.03            # Amount by which a single SFQ pulse rotates the wavefunction
+    theta_target = np.pi    # Target RY rotation
+    
+    N = int(np.round(theta_target / theta)) + 1
+    
+    kick_vec = [] # to store kicks
+    populations = [[] for i in range(n_cut)] # to store measurement probabilities
+    
+    # ---- Creating Free Evolution Unitary ----    
+    U_free = expm((-1j * transmon.H0.matrix * T) / hbar)
+    U_kick = expm((-theta/2) * (transmon.a_dagger.matrix - transmon.a.matrix))
     
     # ---- Creating Our Initial Quantum State ----
     probability_amplitudes = (n_cut) * [0]
-    probability_amplitudes[0] = 1 / np.sqrt(2) 
-    probability_amplitudes[1] = 1 / np.sqrt(2) 
+    probability_amplitudes[0] = 1
     
     probability_amplitudes = np.array(probability_amplitudes)
     probability_amplitudes = probability_amplitudes / np.linalg.norm(probability_amplitudes)
     
-    initial_state = Wavefunction(probability_amplitudes=probability_amplitudes, basis=transmon.H.basis)
-    state         = Wavefunction(probability_amplitudes=probability_amplitudes, basis=transmon.H.basis)
+    state = Wavefunction(probability_amplitudes=probability_amplitudes, basis=transmon.H.basis)    
     
-    # ---- Evolution According to Schrodinger Equation ----
-    T = 1/transmon.fq       # [s]
-    dt = T/100              # [s]
-    num_steps = int(np.round(T / dt)) + 1
-    
-    t_vec = [] # to store time
-    populations = [[] for i in range(n_cut)] # to store measurement probabilities
     
     plt.ion()
     fig = plt.figure(figsize=(16, 8))
@@ -70,17 +78,16 @@ def main():
     # Store Bloch vector history for trail
     bx_hist, by_hist, bz_hist = [], [], []
 
-    for i in range(num_steps):
-        t = i * dt
-        U = expm((-1j * transmon.H0.matrix * t) / hbar)
-        state = initial_state.apply(U=U)
+    for i in range(N):
+        state = state.apply(U=U_kick)
+        state = state.apply(U=U_free)
         
         probabilities = state.get_probabilities()
         
         for idx, p in enumerate(probabilities):
             populations[idx].append(p)
         
-        t_vec.append(t)
+        kick_vec.append(i)
         
         state_azimuth, state_inclination = get_spherical_coords(alpha=state.probability_amplitudes[0],
                                                                 beta=state.probability_amplitudes[1])
@@ -172,7 +179,7 @@ def main():
         ax_fock.set_ylim(0, 1)
         ax_fock.set_xlabel("Fock State |n⟩", fontsize=12)
         ax_fock.set_ylabel("Probability", fontsize=12)
-        ax_fock.set_title(f"Fock Populations (t = {t:.4e} s)", fontsize=14)
+        ax_fock.set_title(f"Fock Populations (kick # = {i:.4e} s)", fontsize=14)
         
         fig.tight_layout()
         fig.canvas.draw()
