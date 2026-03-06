@@ -20,6 +20,7 @@ class Transmon(QuantumOscillator):
         self.H0                           = Operator(matrix=np.diag(self.energies), basis="energy")
         self.alpha                        = (self.energies[2] - self.energies[1]) - (self.energies[1] - self.energies[0])  # Anharmonicity
         self.fq                           = (self.energies[1] - self.energies[0]) / h 
+        self.omega_q                      = self.fq * (2*np.pi)
         # For Fock approximation
         self.a, self.a_dagger             = QuantumOscillator.create_ladder_operators(n_cut=n_cut)
     

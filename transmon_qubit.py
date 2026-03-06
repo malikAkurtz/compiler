@@ -4,71 +4,18 @@ import matplotlib.pyplot as plt
 
 
 from constants import h, hbar, e
-from Transmon import Transmon
+from System import System
 from Wavefunction import Wavefunction
 from utils import *
 from Operator import Operator
+from constants import *
 
 def main():
     # ---- Hyper-parameters for Transmon ----
     EC                 = h * 200 * 1e6   # Charging energy [J]
     EJ_EC              = 50              # EJ/EC ratio
     n_cut              = 41              # Number of charge states, -n_cut : n_cut
-    
-    # ---- Derived Physical Constants ----
-    C = (2 * EC) / (e**2)
-    
-    transmon = Transmon(EC=EC, EJ_EC=EJ_EC, n_cut=n_cut)
-    
-    print(f"Charging Energy [GHZ]: ")
-    print(EC / (h * 1e9))
-    print(f"Charge Operator in Charge Basis: ")
-    print(transmon.n)
-    print(f"Hamiltonian Operator in Charge Basis [J]: ")
-    print(transmon.H)
-    print(f"Diagonalized Hamiltonian Eigenvalues/Energies [J]: ")
-    print(transmon.energies)
-    print(f"Diagonalized Hamiltonian Eigenvectors/Energy States in Charge Basis: ")
-    print(transmon.energy_states)
-    print(f"Transmon Anharmonicity [GHz]: ")
-    print(transmon.alpha / (h * 1e9))
-    print(f"Qubit Frequency [GHz]: ")
-    print(transmon.fq / 1e9)
-    print(f"Qubit Angular Frequency [rad/s]:")
-    omega_q = transmon.fq * (2*np.pi)
-    print(omega_q)
-    
-    # ---- Evolution According to Schrodinger Equation ----
-    T = (2*np.pi) / omega_q # Qubit period [s]
-    theta = 0.03            # Amount by which a single SFQ pulse rotates the wavefunction
-    ry_theta_target = np.pi / 2    # Target RY rotation
-    
-    N = int(np.round(ry_theta_target / theta)) + 1
-    
-    kick_vec = [] # to store kicks
-    populations = [[] for i in range(n_cut)] # to store measurement probabilities
-    
-    # ---- Creating Atomic Unitaries----    
-    U_free_1 = expm((-1j * transmon.H0.matrix * (1*(T/4))) / hbar)
-    U_free_2 = expm((-1j * transmon.H0.matrix * (2*(T/4))) / hbar)
-    U_free_3 = expm((-1j * transmon.H0.matrix * (3*(T/4))) / hbar)
-    U_free_4 = expm((-1j * transmon.H0.matrix * (4*(T/4))) / hbar)
-    U_kick = expm((-theta/2) * (transmon.a_dagger.matrix - transmon.a.matrix))
-    
-    # ---- RY Unitary ---
-    U = np.eye(n_cut, dtype=complex)
-    for i in range(N):
-        U @= (U_free_4 @ U_kick)
-    
-    RY = Operator(matrix=U, basis="energy")
-    
-    # ---- Hadamard Unitary ----  
-    U = np.eye(n_cut, dtype=complex)
-    for i in range(N):
-        U @= (U_free_4 @ U_kick) # RY(pi/2)
-    U = U_free_2 @ U # Free evolution AFTER RY(pi/2)
-    
-    HADAMARD = Operator(matrix=U, basis="energy")
+    theta              = 0.003            # U_kick angle
     
     # ---- Creating Our Initial Quantum State ----
     probability_amplitudes = (n_cut) * [0]
@@ -77,8 +24,29 @@ def main():
     probability_amplitudes = np.array(probability_amplitudes)
     probability_amplitudes = probability_amplitudes / np.linalg.norm(probability_amplitudes)
     
-    state = Wavefunction(probability_amplitudes=probability_amplitudes, basis=transmon.H.basis)    
+    initial_state = Wavefunction(probability_amplitudes=probability_amplitudes, basis="energy")
     
+    system = System(EC=EC, EJ_EC=EJ_EC, n_cut=n_cut, theta=theta, initial_state=initial_state)
+    
+    
+    print(f"Charging Energy [GHZ]: ")
+    print(EC / (h * 1e9))
+    print(f"Charge Operator in Charge Basis: ")
+    print(system.transmon.n)
+    print(f"Hamiltonian Operator in Charge Basis [J]: ")
+    print(system.transmon.H)
+    print(f"Diagonalized Hamiltonian Eigenvalues/Energies [J]: ")
+    print(system.transmon.energies)
+    print(f"Diagonalized Hamiltonian Eigenvectors/Energy States in Charge Basis: ")
+    print(system.transmon.energy_states)
+    print(f"Transmon Anharmonicity [GHz]: ")
+    print(system.transmon.alpha / (h * 1e9))
+    print(f"Qubit Frequency [GHz]: ")
+    print(system.transmon.fq / 1e9)
+    print(f"Qubit Angular Frequency [rad/s]:")
+    print(system.transmon.omega_q)
+
+    populations = [[] for i in range(n_cut)] # to store measurement probabilities
     
     plt.ion()
     fig = plt.figure(figsize=(16, 8))
@@ -98,17 +66,15 @@ def main():
     bx_hist, by_hist, bz_hist = [], [], []
 
     for i in range(100):
-        state = state.apply(U=HADAMARD.matrix)
+        system.Hadamard()
         
-        probabilities = state.get_probabilities()
+        probabilities = system.state.get_probabilities()
         
         for idx, p in enumerate(probabilities):
             populations[idx].append(p)
-        
-        kick_vec.append(i)
-        
-        state_azimuth, state_inclination = get_spherical_coords(alpha=state.probability_amplitudes[0],
-                                                                beta=state.probability_amplitudes[1])
+                
+        state_azimuth, state_inclination = get_spherical_coords(alpha=system.state.probability_amplitudes[0],
+                                                                beta=system.state.probability_amplitudes[1])
         bx, by, bz = get_rectangular_coords(azimuth=state_azimuth, inclination=state_inclination)
         
         bx_hist.append(bx)
