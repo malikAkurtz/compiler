@@ -9,6 +9,7 @@ from Wavefunction import Wavefunction
 from utils import *
 from Operator import Operator
 from constants import *
+from fidelity import *
 
 def main():
     # ---- Hyper-parameters for Transmon ----
@@ -66,7 +67,18 @@ def main():
     bx_hist, by_hist, bz_hist = [], [], []
 
     for i in range(100):
-        system.Hadamard()
+        U, U_target = system.RX(theta_target=np.pi)
+        U_proj = U[:2, :2]
+           
+        # print(U_proj)
+        # print(U_target)
+        
+        # leakage = get_leakage(U_proj=U_proj)
+        # print(f"Leakage Metric: {leakage}")
+        # process_fidelity = get_process_fidelity(U_proj=U_proj, U_target=U_target)
+        # print(f"Process Fidelity: {process_fidelity}")
+        # avg_gate_fidelity = get_average_gate_fidelity(process_fidelity=process_fidelity, leakage=leakage)
+        # print(f"Average Gate Fidelity in the Absence of a Loss Channel: {avg_gate_fidelity}")
         
         probabilities = system.state.get_probabilities()
         

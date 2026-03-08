@@ -8,6 +8,7 @@ from constants import *
 
 class System():
     def __init__(self, EC: float, EJ_EC: float, n_cut: int, theta: float, initial_state: Wavefunction):
+        self.n_cut = n_cut
         self.transmon = Transmon(EC=EC,
                                  EJ_EC=EJ_EC,
                                  n_cut=n_cut
@@ -19,9 +20,9 @@ class System():
         self.sfq_driver = SFQDriver(CC=self.CC,
                                     omega_q=(self.transmon.fq * (2*np.pi)),
                                     C=((2 * EC) / (e**2)),
-                                    H0=self.transmon.H0,
-                                    a=self.transmon.a,
-                                    a_dagger=self.transmon.a_dagger
+                                    EJ=(EJ_EC * EC),
+                                    EC=EC,
+                                    n_energy=self.transmon.n_energy
                                     )
         
         self.state = initial_state
@@ -43,15 +44,59 @@ class System():
             self.state = self.state.apply(U=self.U_free_4)
 
     def RY(self, theta_target: float):
+        U_target = np.array([
+            [np.cos(theta_target / 2), -np.sin(theta_target / 2)],
+            [np.sin(theta_target / 2), np.cos(theta_target / 2)]
+        ])
+        
         N = int(np.round(theta_target / self.sfq_driver.theta)) + 1 # number of total kicks/sfq pulses
         
+        U = np.eye(N=self.n_cut)
         for _ in range(N):
-            self.state = self.sfq_driver.apply_pulse(self.state)
-            self.free_evolve(duration=4)
+            self.state = self.sfq_driver.apply_pulse(psi=self.state)
+            U = self.sfq_driver.U_kick @ U
             
-    def Hadamard(self):        
+            self.free_evolve(duration=4)
+            U = self.U_free_4 @ U
+        
+        return U, U_target
+    
+    def RX(self, theta_target: float):        
+        U_target = np.array([
+            [np.cos(theta_target / 2), -1j * np.sin(theta_target / 2)],
+            [-1j * np.sin(theta_target / 2), np.cos(theta_target / 2)]
+        ])
+        
+        N = int(np.round(theta_target / self.sfq_driver.theta)) + 1 # number of total kicks/sfq pulses
+        
+        U = np.eye(N=self.n_cut)
+        for _ in range(N):
+            self.free_evolve(duration=4)
+            U = self.U_free_4 @ U
+            
+            self.state = self.sfq_driver.apply_pulse(psi=self.state)
+            U = self.sfq_driver.U_kick @ U
+            
+        return U, U_target
+    
+    def X(self):
+        return self.RX(theta_target=np.pi) # ONLY FOR SINGLE QUBIT CASE
+            
+    def Hadamard(self):
+        U_target = np.array([
+            [1, 1],
+            [1, -1]
+        ])
+        U_target *= 1 / np.sqrt(2)
+        
+        U = np.eye(N=self.n_cut)
         # RY(pi/2) rotation
-        self.RY(np.pi/2)
+        RY, _ = self.RY(np.pi/2)
+        U = RY @ U
         # RZ(pi) rotation
         self.free_evolve(duration=2)
+        U = self.U_free_2 @ U
+        
+        return U, U_target
+
         

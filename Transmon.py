@@ -17,6 +17,8 @@ class Transmon(QuantumOscillator):
         self.V                            = Operator(matrix=create_upper_lower(value=-self.EJ / 2, dim=n_cut), basis=self.n.basis) # Potential energy operator (charge basis)
         self.H                            = Operator(matrix=self.T.matrix + self.V.matrix, basis=self.n.basis) # Hamiltonian operator (charge basis)
         self.energies, self.energy_states = np.linalg.eigh(self.H.matrix) # Eigenvalues + eigenvectors of Hamiltonian operator (charge basis)
+        self.n_energy                     = Operator(matrix=self.energy_states.conjugate().T @ self.n.matrix @ self.energy_states,
+                                                     basis="energy")
         self.H0                           = Operator(matrix=np.diag(self.energies), basis="energy")
         self.alpha                        = (self.energies[2] - self.energies[1]) - (self.energies[1] - self.energies[0])  # Anharmonicity
         self.fq                           = (self.energies[1] - self.energies[0]) / h 
