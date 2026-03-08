@@ -16,10 +16,11 @@ def main():
     EC                 = h * 200 * 1e6   # Charging energy [J]
     EJ_EC              = 50              # EJ/EC ratio
     n_cut              = 41              # Number of charge states, -n_cut : n_cut
-    theta              = 0.003            # U_kick angle
+    dim_sub            = 7               # Number of states to truncate to
+    theta              = 0.003           # U_kick angle
     
     # ---- Creating Our Initial Quantum State ----
-    probability_amplitudes = (n_cut) * [0]
+    probability_amplitudes = (dim_sub) * [0]
     probability_amplitudes[0] = 1
     
     probability_amplitudes = np.array(probability_amplitudes)
@@ -27,7 +28,7 @@ def main():
     
     initial_state = Wavefunction(probability_amplitudes=probability_amplitudes, basis="energy")
     
-    system = System(EC=EC, EJ_EC=EJ_EC, n_cut=n_cut, theta=theta, initial_state=initial_state)
+    system = System(EC=EC, EJ_EC=EJ_EC, n_cut=n_cut, theta=theta, initial_state=initial_state, dim_sub=dim_sub)
     
     
     print(f"Charging Energy [GHZ]: ")
@@ -47,7 +48,7 @@ def main():
     print(f"Qubit Angular Frequency [rad/s]:")
     print(system.transmon.omega_q)
 
-    populations = [[] for i in range(n_cut)] # to store measurement probabilities
+    populations = [[] for i in range(dim_sub)] # to store measurement probabilities
     
     plt.ion()
     fig = plt.figure(figsize=(16, 8))
@@ -170,8 +171,8 @@ def main():
         
         # ---- Fock Populations ----
         ax_fock.cla()
-        ax_fock.bar(np.arange(n_cut), probabilities, color='steelblue')
-        ax_fock.set_xlim(-0.5, n_cut - 0.5)
+        ax_fock.bar(np.arange(dim_sub), probabilities, color='steelblue')
+        ax_fock.set_xlim(-0.5, dim_sub - 0.5)
         ax_fock.set_ylim(0, 1)
         ax_fock.set_xlabel("Fock State |n⟩", fontsize=12)
         ax_fock.set_ylabel("Probability", fontsize=12)

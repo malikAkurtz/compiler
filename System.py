@@ -7,11 +7,13 @@ from Wavefunction import Wavefunction
 from constants import *
 
 class System():
-    def __init__(self, EC: float, EJ_EC: float, n_cut: int, theta: float, initial_state: Wavefunction):
+    def __init__(self, EC: float, EJ_EC: float, n_cut: int, theta: float, initial_state: Wavefunction, dim_sub: int):
         self.n_cut = n_cut
+        self.dim_sub = dim_sub
         self.transmon = Transmon(EC=EC,
                                  EJ_EC=EJ_EC,
-                                 n_cut=n_cut
+                                 n_cut=n_cut,
+                                 dim_sub=dim_sub
                                  )
         
         self.C = (2 * EC) / (e**2)
@@ -22,7 +24,7 @@ class System():
                                     C=((2 * EC) / (e**2)),
                                     EJ=(EJ_EC * EC),
                                     EC=EC,
-                                    n_energy=self.transmon.n_energy
+                                    n_energy=self.transmon.n_energy,
                                     )
         
         self.state = initial_state
@@ -51,7 +53,7 @@ class System():
         
         N = int(np.round(theta_target / self.sfq_driver.theta)) + 1 # number of total kicks/sfq pulses
         
-        U = np.eye(N=self.n_cut)
+        U = np.eye(N=self.dim_sub)
         for _ in range(N):
             self.state = self.sfq_driver.apply_pulse(psi=self.state)
             U = self.sfq_driver.U_kick @ U
@@ -69,7 +71,7 @@ class System():
         
         N = int(np.round(theta_target / self.sfq_driver.theta)) + 1 # number of total kicks/sfq pulses
         
-        U = np.eye(N=self.n_cut)
+        U = np.eye(N=self.dim_sub)
         for _ in range(N):
             self.free_evolve(duration=4)
             U = self.U_free_4 @ U
