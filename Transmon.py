@@ -24,11 +24,11 @@ class Transmon(QuantumOscillator):
         self.alpha                        = (self.energies[2] - self.energies[1]) - (self.energies[1] - self.energies[0])  # Anharmonicity
         self.fq                           = (self.energies[1] - self.energies[0]) / h 
         self.omega_q                      = self.fq * (2*np.pi)
-        if dim_sub != None:
-            self.n_energy.matrix = self.n_energy.matrix[:dim_sub, :dim_sub]
-            self.H0.matrix       = self.H0.matrix[:dim_sub, :dim_sub]
         # For Fock approximation
         self.a, self.a_dagger             = QuantumOscillator.create_ladder_operators(n_cut=n_cut)
+        if dim_sub != None:
+            self.n_energy.matrix = self.n_energy.matrix[:dim_sub, :dim_sub]
+            self.H0.matrix       = self.H0.matrix[:dim_sub, :dim_sub]        
     
     
     

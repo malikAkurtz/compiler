@@ -30,10 +30,10 @@ class System():
         self.state = initial_state
         
         self.T = self.T = (2*np.pi) / self.transmon.omega_q # Qubit period [s]
-        self.U_free_1 = expm((-1j * self.transmon.H0.matrix * (1*(self.T/4))) / hbar)
-        self.U_free_2 = expm((-1j * self.transmon.H0.matrix * (2*(self.T/4))) / hbar)
-        self.U_free_3 = expm((-1j * self.transmon.H0.matrix * (3*(self.T/4))) / hbar)
-        self.U_free_4 = expm((-1j * self.transmon.H0.matrix * (4*(self.T/4))) / hbar)
+        # self.U_free_1 = expm((-1j * (self.transmon.H0.matrix - self.transmon.omega_q * (self.transmon.a_dagger.matrix @ self.transmon.a.matrix)) * (1*(self.T/4))) / hbar)
+        # self.U_free_1 = expm((-1j * (self.transmon.H0.matrix - self.transmon.omega_q * (self.transmon.a_dagger.matrix @ self.transmon.a.matrix)) * (2*(self.T/4))) / hbar)
+        # self.U_free_1 = expm((-1j * (self.transmon.H0.matrix - self.transmon.omega_q * (self.transmon.a_dagger.matrix @ self.transmon.a.matrix)) * (3*(self.T/4))) / hbar)
+        # self.U_free_1 = expm((-1j * (self.transmon.H0.matrix - self.transmon.omega_q * (self.transmon.a_dagger.matrix @ self.transmon.a.matrix)) * (4*(self.T/4))) / hbar)
         
     def free_evolve(self, duration: int):
         if duration == 1:

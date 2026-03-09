@@ -67,19 +67,21 @@ def main():
     # Store Bloch vector history for trail
     bx_hist, by_hist, bz_hist = [], [], []
 
-    for i in range(100):
-        U, U_target = system.X()
+    for i in range(1):
+        U, U_target = system.RY(theta_target=np.pi / 2)
         U_proj = U[:2, :2]
            
+        print("Projected Unitary On Computational Subspace: ")
         print(U_proj)
+        print("Target Unitary: ")
         print(U_target)
         
-        # leakage = get_leakage(U_proj=U_proj)
-        # print(f"Leakage Metric: {leakage}")
-        # process_fidelity = get_process_fidelity(U_proj=U_proj, U_target=U_target)
-        # print(f"Process Fidelity: {process_fidelity}")
-        # avg_gate_fidelity = get_average_gate_fidelity(process_fidelity=process_fidelity, leakage=leakage)
-        # print(f"Average Gate Fidelity in the Absence of a Loss Channel: {avg_gate_fidelity}")
+        leakage = get_leakage(U_proj=U_proj)
+        print(f"Leakage Metric: {leakage}")
+        process_fidelity = get_process_fidelity(U_proj=U_proj, U_target=U_target)
+        print(f"Process Fidelity: {process_fidelity}")
+        avg_gate_fidelity = get_average_gate_fidelity(process_fidelity=process_fidelity, leakage=leakage)
+        print(f"Average Gate Fidelity in the Absence of a Loss Channel: {avg_gate_fidelity}")
         
         probabilities = system.state.get_probabilities()
         

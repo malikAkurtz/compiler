@@ -31,3 +31,19 @@ def create_upper_lower(value: float, dim: int):
                 matrix[i][j] = value
                 
     return matrix
+
+def extract_relative_phase(U: np.ndarray):
+    if len(U) != 2:
+        print(f"Only works for 2x2 unitaries")
+        return
+    
+    alpha = U[0][0]
+    beta = U[1][1]
+    
+    phi = np.angle(beta) - np.angle(alpha)
+    
+    return phi
+    
+        
+        
+    
