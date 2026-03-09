@@ -73,11 +73,14 @@ class System():
         
         U = np.eye(N=self.dim_sub)
         for _ in range(N):
-            self.free_evolve(duration=4)
-            U = self.U_free_4 @ U
+            self.free_evolve(duration=3)
+            U = self.U_free_3 @ U
             
             self.state = self.sfq_driver.apply_pulse(psi=self.state)
             U = self.sfq_driver.U_kick @ U
+            
+            self.free_evolve(duration=1)
+            U = self.U_free_1 @ U
             
         return U, U_target
     

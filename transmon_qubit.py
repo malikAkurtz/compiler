@@ -17,7 +17,7 @@ def main():
     EJ_EC              = 50              # EJ/EC ratio
     n_cut              = 41              # Number of charge states, -n_cut : n_cut
     dim_sub            = 7               # Number of states to truncate to
-    theta              = 0.003           # U_kick angle
+    theta              = 0.03           # U_kick angle
     
     # ---- Creating Our Initial Quantum State ----
     probability_amplitudes = (dim_sub) * [0]
@@ -68,11 +68,11 @@ def main():
     bx_hist, by_hist, bz_hist = [], [], []
 
     for i in range(100):
-        U, U_target = system.RX(theta_target=np.pi)
+        U, U_target = system.X()
         U_proj = U[:2, :2]
            
-        # print(U_proj)
-        # print(U_target)
+        print(U_proj)
+        print(U_target)
         
         # leakage = get_leakage(U_proj=U_proj)
         # print(f"Leakage Metric: {leakage}")
