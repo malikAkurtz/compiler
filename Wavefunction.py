@@ -30,4 +30,7 @@ class Wavefunction():
                 for n in range(N):
                     linear_map[k][n] = np.exp(-1j * n * phase) / np.sqrt(2*np.pi)
                     
-            return Wavefunction(probability_amplitudes=(linear_map @ self.probability_amplitudes),basis="phase")
+            return Wavefunction(probability_amplitudes=(linear_map @ self.probability_amplitudes), basis="phase")
+        
+    def change_of_basis(self, transformation_matrix: np.ndarray, basis: str):       
+        return Wavefunction(probability_amplitudes=(transformation_matrix @ self.probability_amplitudes), basis=basis)
