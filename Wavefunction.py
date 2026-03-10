@@ -8,30 +8,24 @@ class Wavefunction():
     along with a specified basis
     """
     
-    def __init__(self, probability_amplitudes: np.ndarray, basis: str):
-        self.probability_amplitudes = probability_amplitudes
-        self.basis                  = basis
-        
-    def apply(self, operator: Operator):
-        new_probability_amplitudes = (operator.get_projection(basis=self.basis) @ self.probability_amplitudes.reshape(-1, 1)).flatten()
-        return Wavefunction(probability_amplitudes=new_probability_amplitudes, basis=self.basis)
-        
-    def get_probabilities(self):
-        return np.array([np.abs(prob_amp)**2 for prob_amp in self.probability_amplitudes])
+    def __init__(self, basis_to_coefs: dict):
+        self.basis_to_coefs = basis_to_coefs
     
-    def get_phase_projection(self, phases: np.ndarray):
-        if self.basis == "fock":
-            N = len(self.probability_amplitudes)
-            K = len(phases)
-            
-            linear_map = np.zeros((K, N), dtype=complex)
-            
-            for k in range(K):
-                phase = phases[k]
-                for n in range(N):
-                    linear_map[k][n] = np.exp(-1j * n * phase) / np.sqrt(2*np.pi)
-                    
-            return Wavefunction(probability_amplitudes=(linear_map @ self.probability_amplitudes), basis="phase")
+    def get_projection(self, basis: str):
+        return self.basis_to_coefs[basis]
+    
+    def set_projection(self, basis: str, coefs: np.ndarray):
+        self.basis_to_coefs[basis] = coefs
         
-    def change_of_basis(self, transformation_matrix: np.ndarray, basis: str):       
-        return Wavefunction(probability_amplitudes=(transformation_matrix @ self.probability_amplitudes), basis=basis)
+    def get_probabilities(self, basis: str):
+        return np.abs(self.basis_to_coefs[basis])**2
+            
+    def apply(self, operator: Operator):
+        new_basis_to_coefs = {}
+        
+        # Apply the operator to each basis representation of the wavefunction
+        for basis, coefs in self.basis_to_coefs.items():
+            new_basis_to_coefs[basis] = (operator.get_projection(basis=basis) @ coefs.reshape(-1, 1)).flatten()
+        
+        return Wavefunction(new_basis_to_coefs)
+              

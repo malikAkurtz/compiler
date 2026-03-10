@@ -3,6 +3,7 @@ import numpy as np
 from QuantumOscillator import QuantumOscillator
 from Operator import Operator
 from constants import hbar   
+from utils import *
         
 class HarmonicOscillator(QuantumOscillator):
     """
@@ -26,3 +27,18 @@ class HarmonicOscillator(QuantumOscillator):
                                                 matrix=np.sqrt(hbar / (2*mass*angular_frequency)) * (self.creation.get_projection("fock") + self.annihilation.get_projection("fock")),
                                                 )
         self.positions, self.position_states = np.linalg.eigh(self.x.get_projection("fock"))
+        
+        self.annihilation.set_projection(
+            basis="position",
+            matrix=matrix_change_basis(
+                transformation_matrix=self.position_states, 
+                matrix=self.annihilation.get_projection(basis="fock")
+                )
+            )
+        self.creation.set_projection(
+            basis="position",
+            matrix=matrix_change_basis(
+                transformation_matrix=self.position_states, 
+                matrix=self.creation.get_projection(basis="fock")
+                )
+            )

@@ -43,23 +43,26 @@ def main():
     probability_amplitudes    = np.array(probability_amplitudes)
     probability_amplitudes    = probability_amplitudes / np.linalg.norm(probability_amplitudes)
     
-    current_state_fock = Wavefunction(probability_amplitudes=probability_amplitudes, basis="fock")
+    current_state = Wavefunction(basis_to_coefs={"fock": probability_amplitudes})
     
-    # eigenvectors of number operator n projected onto the position basis
+    # eigenvectors of number operator n (Fock states) projected onto the position basis
     eigenstates = []
     
     for n in range(n_cut):
-        current_state_pos = current_state_fock.change_of_basis(
-            transformation_matrix=harmonic_oscillator.position_states.conj().T,
-            basis="position"
+        pos_coefs = vector_change_basis(
+            transformation_matrix=harmonic_oscillator.position_states,
+            vector=current_state.get_projection(basis="fock")
             )
-        eigenstates.append(current_state_pos)
+        current_state.set_projection(basis="position", coefs=pos_coefs)
         
-        next_state_fock = current_state_fock.apply(operator=harmonic_oscillator.creation)
-        next_state_fock.probability_amplitudes = next_state_fock.probability_amplitudes / np.linalg.norm(next_state_fock.probability_amplitudes)
-        
-        
-        current_state_fock = next_state_fock
+        eigenstates.append(current_state)
+
+        if n < n_cut - 1:
+            next_state = current_state.apply(operator=harmonic_oscillator.creation)
+            for basis, coefs in next_state.basis_to_coefs.items():
+                next_state.set_projection(basis=basis, coefs=(coefs / np.linalg.norm(coefs)))
+
+            current_state = next_state
         
         
     # ---- Plot wavefunctions at their energy levels ----
@@ -71,7 +74,7 @@ def main():
 
     for n in range(n_cut):
         energy = (hbar * angular_frequency) * (n + 0.5)
-        probs = np.abs(eigenstates[n].probability_amplitudes)**2
+        probs = eigenstates[n].get_probabilities(basis="position")
         scaled = probs / np.max(probs) * (hbar * angular_frequency) * 0.35
         ax.fill_between(harmonic_oscillator.positions / PHI_0, energy, energy + scaled, alpha=0.3)
         ax.plot(harmonic_oscillator.positions / PHI_0, energy + scaled, linewidth=1.5, label=f"|{n}⟩")

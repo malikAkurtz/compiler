@@ -7,11 +7,11 @@ class Operator():
     
     def __init__(self, basis: np.ndarray, matrix: str, ):
         self.basis_to_matrix = {basis : matrix}
-
-    def add_projection(self, basis: str, matrix: np.ndarray):
-        self.basis_to_matrix[basis] = matrix
         
     def get_projection(self, basis: str):
         return self.basis_to_matrix[basis]
+
+    def set_projection(self, basis: str, matrix: np.ndarray):
+        self.basis_to_matrix[basis] = matrix
     
     

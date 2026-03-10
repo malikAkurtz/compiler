@@ -43,6 +43,26 @@ def extract_relative_phase(U: np.ndarray):
     phi = np.angle(beta) - np.angle(alpha)
     
     return phi
-        
+
+def vector_change_basis(transformation_matrix: np.ndarray, vector: np.ndarray):
+    return transformation_matrix.conj().T @ vector
+
+def matrix_change_basis(transformation_matrix: np.ndarray, matrix: np.ndarray):
+    return transformation_matrix.conj().T @ matrix @ transformation_matrix
+
+def fock_to_phase(self, fock_coefs, phases: np.ndarray):
+    N = len(fock_coefs)
+    K = len(phases)
+    
+    linear_map = np.zeros((K, N), dtype=complex)
+    
+    for k in range(K):
+        phase = phases[k]
+        for n in range(N):
+            linear_map[k][n] = np.exp(-1j * n * phase) / np.sqrt(2*np.pi)
+            
+    return vector_change_basis(transformation_matrix=linear_map, vector=fock_coefs)
     
     
+
+
