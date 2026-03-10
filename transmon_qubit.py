@@ -13,13 +13,13 @@ from fidelity import *
 
 def main():
     # ---- Hyper-parameters for Transmon ----
-    EC                 = h * 200 * 1e6   # Charging energy [J]
+    charging_energy    = h * 200 * 1e6   # Charging energy [J]
     EJ_EC              = 50              # EJ/EC ratio
     n_cut              = 41              # Number of charge states, -n_cut : n_cut
-    dim_sub            = 7               # Number of states to truncate to
-    theta              = 0.03           # U_kick angle
+    dim_sub            = 7               # Number of energy states to truncate to
+    theta              = 0.03            # U_kick angle
     
-    # ---- Creating Our Initial Quantum State ----
+    # ---- Creating Our Initial Quantum State in Energy Basis, |0> ----
     probability_amplitudes = (dim_sub) * [0]
     probability_amplitudes[0] = 1
     
@@ -28,11 +28,18 @@ def main():
     
     initial_state = Wavefunction(probability_amplitudes=probability_amplitudes, basis="energy")
     
-    system = System(EC=EC, EJ_EC=EJ_EC, n_cut=n_cut, theta=theta, initial_state=initial_state, dim_sub=dim_sub)
+    # ---- Instantiate System Object ----
+    system = System(EC=charging_energy, 
+                    EJ_EC=EJ_EC, 
+                    n_cut=n_cut, 
+                    theta=theta, 
+                    initial_state=initial_state, 
+                    dim_sub=dim_sub
+                    )
     
     
     print(f"Charging Energy [GHZ]: ")
-    print(EC / (h * 1e9))
+    print(charging_energy / (h * 1e9))
     print(f"Charge Operator in Charge Basis: ")
     print(system.transmon.n)
     print(f"Hamiltonian Operator in Charge Basis [J]: ")

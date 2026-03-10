@@ -13,16 +13,16 @@ class HarmonicOscillator(QuantumOscillator):
         self.angular_frequency               = angular_frequency
         self.annihilation, self.creation     = QuantumOscillator.create_ladder_operators(n_cut=n_cut)
         self.n                               = Operator(
-                                                matrix=(self.creation.matrix @ self.annihilation.matrix), 
-                                                basis="fock"
+                                                basis="fock",
+                                                matrix=(self.creation.get_projection("fock") @ self.annihilation.get_projection("fock")), 
                                                 )
         self.H                               = Operator(
-                                                matrix=hbar*angular_frequency*(self.n.matrix+(0.5*np.eye(n_cut))), 
-                                                basis="fock"
+                                                basis="fock",
+                                                matrix=hbar*angular_frequency*(self.n.get_projection("fock")+(0.5*np.eye(n_cut))), 
                                                 )
-        self.energies, self.energy_states    = np.linalg.eigh(self.H.matrix)
+        self.energies, self.energy_states    = np.linalg.eigh(self.H.get_projection("fock"))
         self.x                               = Operator(
-                                                matrix=np.sqrt(hbar / (2*mass*angular_frequency)) * (self.creation.matrix + self.annihilation.matrix),
-                                                basis="fock"
+                                                basis="fock",
+                                                matrix=np.sqrt(hbar / (2*mass*angular_frequency)) * (self.creation.get_projection("fock") + self.annihilation.get_projection("fock")),
                                                 )
-        self.positions, self.position_states = np.linalg.eigh(self.x.matrix)
+        self.positions, self.position_states = np.linalg.eigh(self.x.get_projection("fock"))

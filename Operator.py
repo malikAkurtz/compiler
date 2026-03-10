@@ -5,10 +5,13 @@ class Operator():
     An Operator is a matrix in a chosen basis
     """
     
-    def __init__(self, matrix: np.ndarray, basis: str):
-        self.matrix = matrix
-        self.basis  = basis
+    def __init__(self, basis: np.ndarray, matrix: str, ):
+        self.basis_to_matrix = {basis : matrix}
 
-    def __str__(self):
-        return f"Matrix: {self.matrix} \n Basis: {self.basis}"
+    def add_projection(self, basis: str, matrix: np.ndarray):
+        self.basis_to_matrix[basis] = matrix
+        
+    def get_projection(self, basis: str):
+        return self.basis_to_matrix[basis]
+    
     

@@ -9,14 +9,21 @@ class QuantumOscillator():
     
     @staticmethod
     def create_ladder_operators(n_cut: int):
-        
-        a = Operator(matrix=np.zeros((n_cut, n_cut)), basis="fock")
+        fock_annihilation_matrix = np.zeros((n_cut, n_cut))
         
         for m in range(n_cut):
             for n in range(n_cut):
                 if m == (n-1):
-                    a.matrix[m][n] = np.sqrt(n)
+                    fock_annihilation_matrix[m][n] = np.sqrt(n)
                     
-        a_dagger = Operator(matrix=np.conjugate(a.matrix).T, basis="fock")
+        annihilation = Operator(
+                        basis="fock",
+                        matrix=fock_annihilation_matrix
+                        )
                     
-        return a, a_dagger
+        creation = Operator(
+                    basis="fock",
+                    matrix=fock_annihilation_matrix.conj().T, 
+                    )
+                    
+        return annihilation, creation

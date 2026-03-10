@@ -1,6 +1,7 @@
 from __future__ import annotations
 import numpy as np
 
+from Operator import Operator
 class Wavefunction():
     """
     A wavefunction is a vector in a complex vector space,
@@ -11,8 +12,8 @@ class Wavefunction():
         self.probability_amplitudes = probability_amplitudes
         self.basis                  = basis
         
-    def apply(self, U: np.ndarray):
-        new_probability_amplitudes = (U @ self.probability_amplitudes.reshape(-1, 1)).flatten()
+    def apply(self, operator: Operator):
+        new_probability_amplitudes = (operator.get_projection(basis=self.basis) @ self.probability_amplitudes.reshape(-1, 1)).flatten()
         return Wavefunction(probability_amplitudes=new_probability_amplitudes, basis=self.basis)
         
     def get_probabilities(self):
