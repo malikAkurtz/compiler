@@ -43,7 +43,6 @@ def extract_relative_phase(U: np.ndarray):
     phi = np.angle(beta) - np.angle(alpha)
     
     return phi
+        
     
-        
-        
     
