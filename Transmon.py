@@ -14,13 +14,15 @@ class Transmon(QuantumOscillator):
         self.EC                           = EC # Charging energy
         self.EJ                           = EJ_EC * EC # Josephson energy
         
+        # Charge operator
         self.n                            = Operator(
             basis_to_matrix={"charge" : np.diag([n for n in range(int(-(n_cut-1)/2), int((n_cut-1)/2) + 1)])}
         )
         
+        # Kinetic energy operator
         self.T                            = Operator(
             basis_to_matrix={"charge" : 4*EC*(self.n.get_projection("charge")**2)}
-        ) # Kinetic energy operator (charge basis)
+        ) 
         
         self.V                            = Operator(
             basis_to_matrix={"charge" : create_upper_lower(value=-self.EJ / 2, dim=n_cut)}
@@ -32,6 +34,15 @@ class Transmon(QuantumOscillator):
         
         self.energies, self.energy_states = np.linalg.eigh(self.H.get_projection("charge")) # Eigenvalues + eigenvectors of Hamiltonian operator (charge basis)
         
+        self.H0                           = Operator(
+        basis_to_matrix={"energy" : np.diag(self.energies)}
+        )
+        
+        # Number operator
+        self.N                            = Operator(
+            basis_to_matrix={"energy": np.diag(np.arange(n_cut))}
+        )
+        
         self.n.set_projection(
             basis="energy",
             matrix=matrix_change_basis(
@@ -39,11 +50,7 @@ class Transmon(QuantumOscillator):
                 matrix=self.n.get_projection("charge")
                 )
             )
-        
-        self.H0                           = Operator(
-            basis_to_matrix={"energy" : np.diag(self.energies)}
-            )
-        
+    
         self.anharmonicity                = (self.energies[2] - self.energies[1]) - (self.energies[1] - self.energies[0])
         self.qubit_frequency              = (self.energies[1] - self.energies[0]) / h 
         self.qubit_angular_frequency      = self.qubit_frequency * (2*np.pi)
@@ -59,6 +66,10 @@ class Transmon(QuantumOscillator):
             self.H0.set_projection(
                 basis="energy",
                 matrix=self.H0.get_projection("energy")[:dim_sub, :dim_sub] 
+            )
+            self.N.set_projection(
+                basis="energy",
+                matrix=self.N.get_projection("energy")[:dim_sub, :dim_sub] 
             )
     
     

@@ -73,10 +73,14 @@ def main():
 
     # Store Bloch vector history for trail
     bx_hist, by_hist, bz_hist = [], [], []
+    
+    print("H0: ")
+    print(system.transmon.H0.get_projection("energy")[0,0])
+    print(system.transmon.H0.get_projection("energy")[1,1] - hbar * system.transmon.qubit_angular_frequency)
 
     for i in range(1):
         U, U_target = system.RY(theta_target=np.pi / 2)
-        U_proj = U[:2, :2]
+        U_proj = U.get_projection("energy")[:2, :2]
            
         print("Projected Unitary On Computational Subspace: ")
         print(U_proj)

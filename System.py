@@ -32,10 +32,13 @@ class System():
         
         self.T = (2*np.pi) / self.transmon.qubit_angular_frequency # Qubit period [s]
         
-        self.U_free_1 = Operator({"energy" : expm(-1j * (self.transmon.H0.get_projection("energy") * (1*(self.T/4))) / hbar)})
-        self.U_free_2 = Operator({"energy" : expm(-1j * (self.transmon.H0.get_projection("energy") * (2*(self.T/4))) / hbar)})
-        self.U_free_3 = Operator({"energy" : expm(-1j * (self.transmon.H0.get_projection("energy") * (3*(self.T/4))) / hbar)})
-        self.U_free_4 = Operator({"energy" : expm(-1j * (self.transmon.H0.get_projection("energy") * (4*(self.T/4))) / hbar)})
+        H_rot = self.transmon.H0.get_projection("energy") \
+                - hbar * self.transmon.qubit_angular_frequency * self.transmon.N.get_projection("energy")
+
+        self.U_free_1 = Operator({"energy": expm(-1j * H_rot * (1 * self.T / 4) / hbar)})
+        self.U_free_2 = Operator({"energy": expm(-1j * H_rot * (2 * self.T / 4) / hbar)})
+        self.U_free_3 = Operator({"energy": expm(-1j * H_rot * (3 * self.T / 4) / hbar)})
+        self.U_free_4 = Operator({"energy": expm(-1j * H_rot * (4 * self.T / 4) / hbar)})
         
     def free_evolve(self, duration: int):
         if duration == 1:
@@ -69,7 +72,7 @@ class System():
                 matrix=self.U_free_4.get_projection("energy") @ U.get_projection("energy")
             )
         
-        return U.get_projection("energy"), U_target
+        return U, U_target
     
     def RX(self, theta_target: float):        
         U_target = np.array([
@@ -79,16 +82,25 @@ class System():
         
         N = int(np.round(theta_target / self.sfq_driver.theta)) + 1 # number of total kicks/sfq pulses
         
-        U = np.eye(N=self.dim_sub)
+        U = Operator({"energy" : np.eye(N=self.dim_sub)})
         for _ in range(N):
             self.free_evolve(duration=3)
-            U = self.U_free_3 @ U
+            U.set_projection(
+                basis="energy",
+                matrix=self.U_free_3.get_projection("energy") @ U.get_projection("energy")
+            )
             
             self.state = self.sfq_driver.apply_pulse(self.state)
-            U = self.sfq_driver.U_kick @ U
+            U.set_projection(
+                basis="energy",
+                matrix=self.sfq_driver.U_kick.get_projection("energy") @ U.get_projection("energy")
+            )
             
             self.free_evolve(duration=1)
-            U = self.U_free_1 @ U
+            U.set_projection(
+                basis="energy",
+                matrix=self.U_free_1.get_projection("energy") @ U.get_projection("energy")
+            )
             
         return U, U_target
     
@@ -102,13 +114,13 @@ class System():
         ])
         U_target *= 1 / np.sqrt(2)
         
-        U = np.eye(N=self.n_cut)
+        U = Operator({"energy" : np.eye(N=self.dim_sub)})
         # RY(pi/2) rotation
         RY, _ = self.RY(np.pi/2)
-        U = RY @ U
+        U = RY.get_projection("energy") @ U.get_projection("energy")
         # RZ(pi) rotation
         self.free_evolve(duration=2)
-        U = self.U_free_2 @ U
+        U = self.U_free_2.get_projection("energy") @ U.get_projection("energy")
         
         return U, U_target
 
