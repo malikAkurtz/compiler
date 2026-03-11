@@ -5,8 +5,8 @@ class Operator():
     An Operator is a matrix in a chosen basis
     """
     
-    def __init__(self, basis: np.ndarray, matrix: str, ):
-        self.basis_to_matrix = {basis : matrix}
+    def __init__(self, basis_to_matrix: dict):
+        self.basis_to_matrix = basis_to_matrix
         
     def get_projection(self, basis: str):
         return self.basis_to_matrix[basis]

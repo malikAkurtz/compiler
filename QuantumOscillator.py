@@ -17,13 +17,11 @@ class QuantumOscillator():
                     fock_annihilation_matrix[m][n] = np.sqrt(n)
                     
         annihilation = Operator(
-                        basis="fock",
-                        matrix=fock_annihilation_matrix
+                        basis_to_matrix={"fock" : fock_annihilation_matrix}
                         )
                     
         creation = Operator(
-                    basis="fock",
-                    matrix=fock_annihilation_matrix.conj().T, 
-                    )
+                        basis_to_matrix={"fock" : fock_annihilation_matrix.conj().T}
+                        )
                     
         return annihilation, creation

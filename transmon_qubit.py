@@ -26,7 +26,7 @@ def main():
     probability_amplitudes = np.array(probability_amplitudes)
     probability_amplitudes = probability_amplitudes / np.linalg.norm(probability_amplitudes)
     
-    initial_state = Wavefunction(probability_amplitudes=probability_amplitudes, basis="energy")
+    initial_state = Wavefunction(basis_to_coefs={"fock" : probability_amplitudes})
     
     # ---- Instantiate System Object ----
     system = System(EC=charging_energy, 
@@ -49,11 +49,11 @@ def main():
     print(f"Diagonalized Hamiltonian Eigenvectors/Energy States in Charge Basis: ")
     print(system.transmon.energy_states)
     print(f"Transmon Anharmonicity [GHz]: ")
-    print(system.transmon.alpha / (h * 1e9))
+    print(system.transmon.anharmonicity / (h * 1e9))
     print(f"Qubit Frequency [GHz]: ")
-    print(system.transmon.fq / 1e9)
+    print(system.transmon.qubit_frequency / 1e9)
     print(f"Qubit Angular Frequency [rad/s]:")
-    print(system.transmon.omega_q)
+    print(system.transmon.qubit_angular_frequency)
 
     populations = [[] for i in range(dim_sub)] # to store measurement probabilities
     

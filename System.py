@@ -17,19 +17,19 @@ class System():
                                  )
         
         self.C = (2 * EC) / (e**2)
-        self.CC = theta / ( PHI_0 * np.sqrt( (2*self.transmon.omega_q) / self.C ) )
+        self.CC = theta / ( PHI_0 * np.sqrt( (2*self.transmon.qubit_angular_frequency) / self.C ) )
         
         self.sfq_driver = SFQDriver(CC=self.CC,
-                                    omega_q=(self.transmon.fq * (2*np.pi)),
+                                    omega_q=(self.transmon.qubit_frequency * (2*np.pi)),
                                     C=((2 * EC) / (e**2)),
                                     EJ=(EJ_EC * EC),
                                     EC=EC,
-                                    n_energy=self.transmon.n_energy,
+                                    n=self.transmon.n,
                                     )
         
         self.state = initial_state
         
-        self.T = self.T = (2*np.pi) / self.transmon.omega_q # Qubit period [s]
+        self.T = self.T = (2*np.pi) / self.transmon.qubit_angular_frequency # Qubit period [s]
         # self.U_free_1 = expm((-1j * (self.transmon.H0.matrix - self.transmon.omega_q * (self.transmon.a_dagger.matrix @ self.transmon.a.matrix)) * (1*(self.T/4))) / hbar)
         # self.U_free_1 = expm((-1j * (self.transmon.H0.matrix - self.transmon.omega_q * (self.transmon.a_dagger.matrix @ self.transmon.a.matrix)) * (2*(self.T/4))) / hbar)
         # self.U_free_1 = expm((-1j * (self.transmon.H0.matrix - self.transmon.omega_q * (self.transmon.a_dagger.matrix @ self.transmon.a.matrix)) * (3*(self.T/4))) / hbar)
@@ -55,7 +55,7 @@ class System():
         
         U = np.eye(N=self.dim_sub)
         for _ in range(N):
-            self.state = self.sfq_driver.apply_pulse(psi=self.state)
+            self.state = self.sfq_driver.apply_pulse(self.state)
             U = self.sfq_driver.U_kick @ U
             
             self.free_evolve(duration=4)
@@ -76,7 +76,7 @@ class System():
             self.free_evolve(duration=3)
             U = self.U_free_3 @ U
             
-            self.state = self.sfq_driver.apply_pulse(psi=self.state)
+            self.state = self.sfq_driver.apply_pulse(self.state)
             U = self.sfq_driver.U_kick @ U
             
             self.free_evolve(duration=1)
