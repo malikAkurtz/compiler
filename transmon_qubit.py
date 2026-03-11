@@ -26,7 +26,7 @@ def main():
     probability_amplitudes = np.array(probability_amplitudes)
     probability_amplitudes = probability_amplitudes / np.linalg.norm(probability_amplitudes)
     
-    initial_state = Wavefunction(basis_to_coefs={"fock" : probability_amplitudes})
+    initial_state = Wavefunction(basis_to_coefs={"energy" : probability_amplitudes})
     
     # ---- Instantiate System Object ----
     system = System(EC=charging_energy, 
@@ -90,13 +90,13 @@ def main():
         avg_gate_fidelity = get_average_gate_fidelity(process_fidelity=process_fidelity, leakage=leakage)
         print(f"Average Gate Fidelity in the Absence of a Loss Channel: {avg_gate_fidelity}")
         
-        probabilities = system.state.get_probabilities()
+        probabilities = system.state.get_probabilities(basis="energy")
         
         for idx, p in enumerate(probabilities):
             populations[idx].append(p)
                 
-        state_azimuth, state_inclination = get_spherical_coords(alpha=system.state.probability_amplitudes[0],
-                                                                beta=system.state.probability_amplitudes[1])
+        state_azimuth, state_inclination = get_spherical_coords(alpha=system.state.get_projection("energy")[0],
+                                                                beta=system.state.get_projection("energy")[1])
         bx, by, bz = get_rectangular_coords(azimuth=state_azimuth, inclination=state_inclination)
         
         bx_hist.append(bx)

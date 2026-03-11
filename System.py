@@ -1,6 +1,7 @@
 import numpy as np
 from scipy.linalg import expm
 
+from Operator import Operator
 from Transmon import Transmon
 from SFQDriver import SFQDriver
 from Wavefunction import Wavefunction
@@ -29,21 +30,22 @@ class System():
         
         self.state = initial_state
         
-        self.T = self.T = (2*np.pi) / self.transmon.qubit_angular_frequency # Qubit period [s]
-        # self.U_free_1 = expm((-1j * (self.transmon.H0.matrix - self.transmon.omega_q * (self.transmon.a_dagger.matrix @ self.transmon.a.matrix)) * (1*(self.T/4))) / hbar)
-        # self.U_free_1 = expm((-1j * (self.transmon.H0.matrix - self.transmon.omega_q * (self.transmon.a_dagger.matrix @ self.transmon.a.matrix)) * (2*(self.T/4))) / hbar)
-        # self.U_free_1 = expm((-1j * (self.transmon.H0.matrix - self.transmon.omega_q * (self.transmon.a_dagger.matrix @ self.transmon.a.matrix)) * (3*(self.T/4))) / hbar)
-        # self.U_free_1 = expm((-1j * (self.transmon.H0.matrix - self.transmon.omega_q * (self.transmon.a_dagger.matrix @ self.transmon.a.matrix)) * (4*(self.T/4))) / hbar)
+        self.T = (2*np.pi) / self.transmon.qubit_angular_frequency # Qubit period [s]
+        
+        self.U_free_1 = Operator({"energy" : expm(-1j * (self.transmon.H0.get_projection("energy") * (1*(self.T/4))) / hbar)})
+        self.U_free_2 = Operator({"energy" : expm(-1j * (self.transmon.H0.get_projection("energy") * (2*(self.T/4))) / hbar)})
+        self.U_free_3 = Operator({"energy" : expm(-1j * (self.transmon.H0.get_projection("energy") * (3*(self.T/4))) / hbar)})
+        self.U_free_4 = Operator({"energy" : expm(-1j * (self.transmon.H0.get_projection("energy") * (4*(self.T/4))) / hbar)})
         
     def free_evolve(self, duration: int):
         if duration == 1:
-            self.state = self.state.apply(U=self.U_free_1)
+            self.state = self.state.apply(operator=self.U_free_1)
         elif duration == 2:
-            self.state = self.state.apply(U=self.U_free_2)
+            self.state = self.state.apply(operator=self.U_free_2)
         elif duration == 3:
-            self.state = self.state.apply(U=self.U_free_3)
+            self.state = self.state.apply(operator=self.U_free_3)
         elif duration == 4:
-            self.state = self.state.apply(U=self.U_free_4)
+            self.state = self.state.apply(operator=self.U_free_4)
 
     def RY(self, theta_target: float):
         U_target = np.array([
@@ -53,15 +55,21 @@ class System():
         
         N = int(np.round(theta_target / self.sfq_driver.theta)) + 1 # number of total kicks/sfq pulses
         
-        U = np.eye(N=self.dim_sub)
+        U = Operator({"energy" : np.eye(N=self.dim_sub)})
         for _ in range(N):
             self.state = self.sfq_driver.apply_pulse(self.state)
-            U = self.sfq_driver.U_kick @ U
+            U.set_projection(
+                basis="energy",
+                matrix=self.sfq_driver.U_kick.get_projection("energy") @ U.get_projection("energy")
+            )
             
             self.free_evolve(duration=4)
-            U = self.U_free_4 @ U
+            U.set_projection(
+                basis="energy",
+                matrix=self.U_free_4.get_projection("energy") @ U.get_projection("energy")
+            )
         
-        return U, U_target
+        return U.get_projection("energy"), U_target
     
     def RX(self, theta_target: float):        
         U_target = np.array([
