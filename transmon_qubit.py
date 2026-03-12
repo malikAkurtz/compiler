@@ -16,25 +16,26 @@ def main():
     charging_energy    = h * 200 * 1e6   # Charging energy [J]
     EJ_EC              = 50              # EJ/EC ratio
     n_cut              = 41              # Number of charge states, -n_cut : n_cut
-    dim_sub            = 7               # Number of energy states to truncate to
+    dim_sub            = 7               # Number of energy (or fock) states to truncate to
     theta              = 0.03            # U_kick angle
+    fock_approximation = True
     
-    # ---- Creating Our Initial Quantum State in Energy Basis, |0> ----
-    probability_amplitudes = (dim_sub) * [0]
+    # ---- Creating Our Initial Quantum State in Energy (or Fock) Basis, |0> ----
+    probability_amplitudes = (n_cut) * [0]
     probability_amplitudes[0] = 1
     
     probability_amplitudes = np.array(probability_amplitudes)
     probability_amplitudes = probability_amplitudes / np.linalg.norm(probability_amplitudes)
     
-    initial_state = Wavefunction(basis_to_coefs={"energy" : probability_amplitudes})
+    initial_state = Wavefunction(basis_to_coefs={"energy" if not fock_approximation else "fock" : probability_amplitudes})
     
     # ---- Instantiate System Object ----
     system = System(EC=charging_energy, 
                     EJ_EC=EJ_EC, 
                     n_cut=n_cut, 
                     theta=theta, 
-                    initial_state=initial_state, 
-                    dim_sub=dim_sub
+                    initial_state=initial_state,
+                    fock_approximation=fock_approximation
                     )
     
     
@@ -43,7 +44,7 @@ def main():
     print(f"Charge Operator in Charge Basis: ")
     print(system.transmon.n)
     print(f"Hamiltonian Operator in Charge Basis [J]: ")
-    print(system.transmon.H)
+    print(system.transmon.H0)
     print(f"Diagonalized Hamiltonian Eigenvalues/Energies [J]: ")
     print(system.transmon.energies)
     print(f"Diagonalized Hamiltonian Eigenvectors/Energy States in Charge Basis: ")
@@ -55,7 +56,7 @@ def main():
     print(f"Qubit Angular Frequency [rad/s]:")
     print(system.transmon.qubit_angular_frequency)
 
-    populations = [[] for i in range(dim_sub)] # to store measurement probabilities
+    populations = [[] for i in range(n_cut)] # to store measurement probabilities
     
     plt.ion()
     fig = plt.figure(figsize=(16, 8))
@@ -74,13 +75,13 @@ def main():
     # Store Bloch vector history for trail
     bx_hist, by_hist, bz_hist = [], [], []
     
-    print("H0: ")
-    print(system.transmon.H0.get_projection("energy")[0,0])
-    print(system.transmon.H0.get_projection("energy")[1,1] - hbar * system.transmon.qubit_angular_frequency)
+    # print("H0: ")
+    # print(system.transmon.H0.get_projection("energy" if not fock_approximation else "fock")[0,0])
+    # print(system.transmon.H0.get_projection("energy" if not fock_approximation else "fock")[1,1] - hbar * system.transmon.qubit_angular_frequency)
 
-    for i in range(1):
+    for i in range(100):
         U, U_target = system.RY(theta_target=np.pi / 2)
-        U_proj = U.get_projection("energy")[:2, :2]
+        U_proj = U.get_projection("energy" if not fock_approximation else "fock")[:2, :2]
            
         print("Projected Unitary On Computational Subspace: ")
         print(U_proj)
@@ -94,13 +95,13 @@ def main():
         avg_gate_fidelity = get_average_gate_fidelity(process_fidelity=process_fidelity, leakage=leakage)
         print(f"Average Gate Fidelity in the Absence of a Loss Channel: {avg_gate_fidelity}")
         
-        probabilities = system.state.get_probabilities(basis="energy")
+        probabilities = system.state.get_probabilities("energy" if not fock_approximation else "fock")
         
         for idx, p in enumerate(probabilities):
             populations[idx].append(p)
                 
-        state_azimuth, state_inclination = get_spherical_coords(alpha=system.state.get_projection("energy")[0],
-                                                                beta=system.state.get_projection("energy")[1])
+        state_azimuth, state_inclination = get_spherical_coords(alpha=system.state.get_projection("energy" if not fock_approximation else "fock")[0],
+                                                                beta=system.state.get_projection("energy" if not fock_approximation else "fock")[1])
         bx, by, bz = get_rectangular_coords(azimuth=state_azimuth, inclination=state_inclination)
         
         bx_hist.append(bx)
@@ -184,12 +185,12 @@ def main():
         
         # ---- Fock Populations ----
         ax_fock.cla()
-        ax_fock.bar(np.arange(dim_sub), probabilities, color='steelblue')
-        ax_fock.set_xlim(-0.5, dim_sub - 0.5)
+        ax_fock.bar(np.arange(n_cut), probabilities, color='steelblue')
+        ax_fock.set_xlim(-0.5, n_cut - 0.5)
         ax_fock.set_ylim(0, 1)
-        ax_fock.set_xlabel("Fock State |n⟩", fontsize=12)
+        ax_fock.set_xlabel("Energy (Or Fock) State |n⟩", fontsize=12)
         ax_fock.set_ylabel("Probability", fontsize=12)
-        ax_fock.set_title(f"Fock Populations (kick # = {i:.4e} s)", fontsize=14)
+        ax_fock.set_title(f"Energy (Or Fock) Populations (kick # = {i:.4e} s)", fontsize=14)
         
         fig.tight_layout()
         fig.canvas.draw()
