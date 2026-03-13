@@ -2,59 +2,74 @@ import numpy as np
 from scipy.linalg import expm
 import matplotlib.pyplot as plt
 
-
-from constants import h, hbar, e
 from System import System
+from Transmon import Transmon
+from HarmonicOscillator import HarmonicOscillator
+from SFQDriver import SFQDriver
 from Wavefunction import Wavefunction
 from utils import *
-from Operator import Operator
 from constants import *
 from fidelity import *
 
 def main():
-    # ---- Hyper-parameters for Transmon ----
-    charging_energy    = h * 200 * 1e6   # Charging energy [J]
-    EJ_EC              = 50              # EJ/EC ratio
+    # ---- Shared Hyper-parameters ----
     n_cut              = 41              # Number of charge states, -n_cut : n_cut
     theta              = 0.03            # U_kick angle
-    fock_approximation = True
+    # if basis = "fock", everything will be done in the fock basis
+    # if basis = "energy" everything will be done in the energy basis (no fock approximation)
+    # i.e. has to be "fock" for Harmonic Oscillator, but acts as a hyperparameter for a Transmon
+    basis      = "energy"
     
-    # ---- Creating Our Initial Quantum State in Energy (or Fock) Basis, |0> ----
+    # ---- Hyper-parameters for Transmon ----
+    EC                 = h * 200 * 1e6   # Charging energy [J]
+    EJ_EC              = 50              # EJ/EC ratio
+    
+    # ---- Hyper-parameters for Naive Harmonic Oscillator Qubit ----
+    C          = 100e-15 # [F]
+    L          = 10e-9   # [H]
+    
+    # Derived Physical Constants
+    spring_constant   = 1 / L
+    angular_frequency = np.sqrt(spring_constant / C) # [rad/s]
+        
+    # ---- Create the Oscillator ----
+    harmonic_oscillator = HarmonicOscillator(
+        mass=C,
+        angular_frequency=angular_frequency,
+        n_cut=n_cut
+    )
+    
+    transmon = Transmon(
+        charging_energy=EC,
+        EJ_EC=EJ_EC,
+        n_cut=n_cut,
+        basis=basis
+    )
+    
+    # ---- Creating Our Initial Quantum State in Energy/Fock Basis, |0> ----
     probability_amplitudes = (n_cut) * [0]
     probability_amplitudes[0] = 1
     
     probability_amplitudes = np.array(probability_amplitudes)
     probability_amplitudes = probability_amplitudes / np.linalg.norm(probability_amplitudes)
     
-    initial_state = Wavefunction(basis_to_coefs={"energy" if not fock_approximation else "fock" : probability_amplitudes})
+    initial_state = Wavefunction(basis_to_coefs={basis : probability_amplitudes})
     
+    # ---- Instantiate the Driver ----
+    sfq_driver = SFQDriver(
+        theta=theta,
+        oscillator=transmon,
+        basis=basis
+    )
+        
     # ---- Instantiate System Object ----
-    system = System(EC=charging_energy, 
-                    EJ_EC=EJ_EC, 
-                    n_cut=n_cut, 
-                    theta=theta, 
-                    initial_state=initial_state,
-                    fock_approximation=fock_approximation
-                    )
+    system = System(
+        oscillator=transmon,
+        sfq_driver=sfq_driver,
+        initial_state=initial_state,
+        basis=basis
+    )
     
-    
-    print(f"Charging Energy [GHZ]: ")
-    print(charging_energy / (h * 1e9))
-    print(f"Charge Operator in Charge Basis: ")
-    print(system.transmon.n)
-    print(f"Hamiltonian Operator in Charge Basis [J]: ")
-    print(system.transmon.H0)
-    print(f"Diagonalized Hamiltonian Eigenvalues/Energies [J]: ")
-    print(system.transmon.energies)
-    print(f"Diagonalized Hamiltonian Eigenvectors/Energy States in Charge Basis: ")
-    print(system.transmon.energy_states)
-    print(f"Transmon Anharmonicity [GHz]: ")
-    print(system.transmon.anharmonicity / (h * 1e9))
-    print(f"Qubit Frequency [GHz]: ")
-    print(system.transmon.qubit_frequency / 1e9)
-    print(f"Qubit Angular Frequency [rad/s]:")
-    print(system.transmon.qubit_angular_frequency)
-
     populations = [[] for i in range(n_cut)] # to store measurement probabilities
     
     plt.ion()
@@ -74,29 +89,24 @@ def main():
     # Store Bloch vector history for trail
     bx_hist, by_hist, bz_hist = [], [], []
 
-    for i in range(100):
-        U, U_target = system.RY(np.pi/2)
-        U_proj = U["energy" if not fock_approximation else "fock"][:2, :2]
-           
-        print("Projected Unitary On Computational Subspace: ")
-        print(U_proj)
-        print("Target Unitary: ")
-        print(U_target)
+    for i in range(1):
+        U, U_target = system.RX(np.pi/2)
+        U_proj = U[basis][:2, :2]
         
-        leakage = get_leakage(U_proj=U_proj)
-        print(f"Leakage Metric: {leakage}")
-        process_fidelity = get_process_fidelity(U_proj=U_proj, U_target=U_target)
-        print(f"Process Fidelity: {process_fidelity}")
-        avg_gate_fidelity = get_average_gate_fidelity(process_fidelity=process_fidelity, leakage=leakage)
-        print(f"Average Gate Fidelity in the Absence of a Loss Channel: {avg_gate_fidelity}")
+        # leakage = get_leakage(U_proj=U_proj)
+        # print(f"Leakage Metric: {leakage}")
+        # process_fidelity = get_process_fidelity(U_proj=U_proj, U_target=U_target)
+        # print(f"Process Fidelity: {process_fidelity}")
+        # avg_gate_fidelity = get_average_gate_fidelity(process_fidelity=process_fidelity, leakage=leakage)
+        # print(f"Average Gate Fidelity in the Absence of a Loss Channel: {avg_gate_fidelity}")
         
-        probabilities = system.state.get_probabilities("energy" if not fock_approximation else "fock")
+        probabilities = system.state.get_probabilities(basis)
         
         for idx, p in enumerate(probabilities):
             populations[idx].append(p)
                 
-        state_azimuth, state_inclination = get_spherical_coords(alpha=system.state["energy" if not fock_approximation else "fock"][0],
-                                                                beta=system.state["energy" if not fock_approximation else "fock"][1])
+        state_azimuth, state_inclination = get_spherical_coords(alpha=system.state[basis][0],
+                                                                beta=system.state[basis][1])
         bx, by, bz = get_rectangular_coords(azimuth=state_azimuth, inclination=state_inclination)
         
         bx_hist.append(bx)

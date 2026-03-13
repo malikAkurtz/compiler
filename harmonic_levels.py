@@ -25,15 +25,15 @@ def main():
                             n_cut=n_cut
                             )
     
-    print(f"Creation and Annihilation Operators in Fock/Energy Basis: ")
+    print(f"Creation and Annihilation Operators in fock Basis: ")
     print(f"Annihilation: ")
     print(harmonic_oscillator.annihilation)
     print(f"Creation: ")
     print(harmonic_oscillator.creation)
-    print(f"Number Operator in Fock/Energy Basis: ")
+    print(f"Number Operator in fock Basis: ")
     print(harmonic_oscillator.n)
-    print("Hamiltonian in Fock/Energy Basis: ")
-    print(harmonic_oscillator.H)
+    print("Hamiltonian in fock Basis: ")
+    print(harmonic_oscillator.H0)
     print("Hamiltonian Energies: ")
     print(harmonic_oscillator.energies)
     

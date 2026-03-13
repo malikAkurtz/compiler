@@ -1,6 +1,7 @@
 import numpy as np
 from scipy.linalg import expm
 
+from QuantumOscillator import QuantumOscillator
 from Operator import Operator
 from Transmon import Transmon
 from SFQDriver import SFQDriver
@@ -8,39 +9,21 @@ from Wavefunction import Wavefunction
 from constants import *
 
 class System():
-    def __init__(self, EC: float, EJ_EC: float, n_cut: int, theta: float, initial_state: Wavefunction, fock_approximation: bool):
-        self.fock_approx = fock_approximation
-        self.n_cut = n_cut
-        self.transmon = Transmon(EC=EC,
-                                 EJ_EC=EJ_EC,
-                                 n_cut=n_cut,
-                                 fock_approximation=fock_approximation
-                                 )
+    def __init__(self, oscillator: QuantumOscillator, sfq_driver: SFQDriver, initial_state: Wavefunction, basis: str):
+        self.oscillator = oscillator
+        self.sfq_driver = sfq_driver
+        self.state      = initial_state
+                
+        self.T          = (2*np.pi) / self.oscillator.angular_frequency # Qubit period [s]
         
-        self.C = (2 * EC) / (e**2)
-        self.CC = theta / ( PHI_0 * np.sqrt( (2*self.transmon.qubit_angular_frequency) / self.C ) )
+        self.basis      = basis
         
-        self.sfq_driver = SFQDriver(CC=self.CC,
-                                    omega_q=(self.transmon.qubit_frequency * (2*np.pi)),
-                                    C=((2 * EC) / (e**2)),
-                                    EJ=(EJ_EC * EC),
-                                    EC=EC,
-                                    n=self.transmon.n,
-                                    fock_approximation=fock_approximation
-                                    )
-        
-        self.state = initial_state
-        
-        self.T = (2*np.pi) / self.transmon.qubit_angular_frequency # Qubit period [s]
-        
-        # H_rot = self.transmon.H0.get_projection("energy") \
-        #         - hbar * self.transmon.qubit_angular_frequency * self.transmon.N.get_projection("energy")
-        
-        if fock_approximation:
-            self.U_free_1 = Operator({"energy" if not self.fock_approx else "fock": expm(-1j * self.transmon.H0.get_projection("fock") * (1 * self.T / 4) / hbar)})
-            self.U_free_2 = Operator({"energy" if not self.fock_approx else "fock": expm(-1j * self.transmon.H0.get_projection("fock") * (2 * self.T / 4) / hbar)})
-            self.U_free_3 = Operator({"energy" if not self.fock_approx else "fock": expm(-1j * self.transmon.H0.get_projection("fock") * (3 * self.T / 4) / hbar)})
-            self.U_free_4 = Operator({"energy" if not self.fock_approx else "fock": expm(-1j * self.transmon.H0.get_projection("fock") * (4 * self.T / 4) / hbar)})
+    
+        self.U_free_1 = Operator({self.basis: expm(-1j * self.oscillator.H0[self.basis] * (1 * self.T / 4) / hbar)})
+        self.U_free_2 = Operator({self.basis: expm(-1j * self.oscillator.H0[self.basis] * (2 * self.T / 4) / hbar)})
+        self.U_free_3 = Operator({self.basis: expm(-1j * self.oscillator.H0[self.basis] * (3 * self.T / 4) / hbar)})
+        self.U_free_4 = Operator({self.basis: expm(-1j * self.oscillator.H0[self.basis] * (4 * self.T / 4) / hbar)})
+    
         
     def free_evolve(self, duration: int):
         if duration == 1:
@@ -60,21 +43,13 @@ class System():
         
         N = int(np.round(theta_target / self.sfq_driver.theta)) + 1 # number of total kicks/sfq pulses
         
-        U = Operator({"energy" if not self.fock_approx else "fock": np.eye(N=self.n_cut)})
+        U = Operator({self.basis: np.eye(N=len(self.state[self.basis]))})
         for _ in range(N):
             self.state = self.sfq_driver.apply_pulse(self.state)
-            U.set_projection(
-                basis="energy" if not self.fock_approx else "fock",
-                matrix=self.sfq_driver.U_kick.get_projection("energy" if not self.fock_approx else "fock") \
-                    @ U.get_projection("energy" if not self.fock_approx else "fock")
-            )
+            U[self.basis] = self.sfq_driver.U_kick[self.basis] @ U[self.basis]
             
             self.free_evolve(duration=4)
-            U.set_projection(
-                basis="energy" if not self.fock_approx else "fock",
-                matrix=self.U_free_4.get_projection("energy" if not self.fock_approx else "fock") \
-                    @ U.get_projection("energy" if not self.fock_approx else "fock")
-            )
+            U[self.basis] = self.U_free_4[self.basis] @ U[self.basis]
         
         return U, U_target
     
@@ -86,28 +61,16 @@ class System():
         
         N = int(np.round(theta_target / self.sfq_driver.theta)) + 1 # number of total kicks/sfq pulses
         
-        U = Operator({"energy" if not self.fock_approx else "fock" : np.eye(N=self.n_cut)})
+        U = Operator({self.basis: np.eye(N=len(self.state[self.basis]))})
         for _ in range(N):
             self.free_evolve(duration=3)
-            U.set_projection(
-                basis="energy" if not self.fock_approx else "fock",
-                matrix=self.U_free_3.get_projection("energy" if not self.fock_approx else "fock") \
-                    @ U.get_projection("energy" if not self.fock_approx else "fock")
-            )
+            U[self.basis] = self.U_free_3[self.basis] @ U[self.basis]
             
             self.state = self.sfq_driver.apply_pulse(self.state)
-            U.set_projection(
-                basis="energy" if not self.fock_approx else "fock",
-                matrix=self.sfq_driver.U_kick.get_projection("energy" if not self.fock_approx else "fock") \
-                    @ U.get_projection("energy" if not self.fock_approx else "fock")
-            )
+            U[self.basis] = self.sfq_driver.U_kick[self.basis] @ U[self.basis]
             
             self.free_evolve(duration=1)
-            U.set_projection(
-                basis="energy" if not self.fock_approx else "fock",
-                matrix=self.U_free_1.get_projection("energy" if not self.fock_approx else "fock") \
-                    @ U.get_projection("energy" if not self.fock_approx else "fock")
-            )
+            U[self.basis] = self.U_free_1[self.basis] @ U[self.basis]
             
         return U, U_target
     
@@ -116,18 +79,18 @@ class System():
             
     def Hadamard(self):
         U_target = np.array([
-            [1, 1],
-            [1, -1]
+            [1.0, 1.0],
+            [1.0, -1.0]
         ])
         U_target *= 1 / np.sqrt(2)
         
-        U = Operator({"energy" if not self.fock_approx else "fock" : np.eye(N=self.n_cut)})
+        U = Operator({self.basis: np.eye(N=len(self.state[self.basis]))})
         # RY(pi/2) rotation
         RY, _ = self.RY(np.pi/2)
-        U = RY.get_projection("energy" if not self.fock_approx else "fock") @ U.get_projection("energy" if not self.fock_approx else "fock")
+        U = RY[self.basis] @ U[self.basis]
         # RZ(pi) rotation
         self.free_evolve(duration=2)
-        U = self.U_free_2.get_projection("energy" if not self.fock_approx else "fock") @ U.get_projection("energy" if not self.fock_approx else "fock")
+        U = self.U_free_2[self.basis] @ U[self.basis]
         
         return U, U_target
 
