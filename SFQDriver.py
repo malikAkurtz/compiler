@@ -16,11 +16,11 @@ class SFQDriver():
             theta_prime = oscillator.theta_prime(theta) 
             
             self.U_kick = Operator(
-            basis_to_matrix={basis : expm( ((-1j * theta_prime) / 2) * oscillator.n["energy"] )}
+            basis_to_matrix={basis : expm( (1j * (-theta_prime) / 2) * oscillator.n["energy"] )}
             )
         else:
             self.U_kick = Operator(
-            basis_to_matrix={basis : expm( (-theta/2) * (oscillator.creation["fock"] - oscillator.annihilation["fock"]) )}
+            basis_to_matrix={basis : expm( (theta/2) * (oscillator.creation["fock"] - oscillator.annihilation["fock"]) )}
             )
                         
     def apply_pulse(self, psi: Wavefunction):

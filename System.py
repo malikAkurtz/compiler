@@ -41,7 +41,7 @@ class System():
             [np.sin(theta_target / 2), np.cos(theta_target / 2)]
         ])
         
-        N = int(np.round(theta_target / self.sfq_driver.theta)) + 1 # number of total kicks/sfq pulses
+        N = int(np.round(np.abs(theta_target) / self.sfq_driver.theta)) + 1 # number of total kicks/sfq pulses
         
         U = Operator({self.basis: np.eye(N=len(self.state[self.basis]))})
         for _ in range(N):

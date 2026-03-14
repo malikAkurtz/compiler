@@ -14,11 +14,11 @@ from fidelity import *
 def main():
     # ---- Shared Hyper-parameters ----
     n_cut              = 41              # Number of charge states, -n_cut : n_cut
-    theta              = 0.03            # U_kick angle
+    theta              = 0.003            # U_kick angle
     # if basis = "fock", everything will be done in the fock basis
     # if basis = "energy" everything will be done in the energy basis (no fock approximation)
     # i.e. has to be "fock" for Harmonic Oscillator, but acts as a hyperparameter for a Transmon
-    basis      = "energy"
+    basis              = "energy"
     
     # ---- Hyper-parameters for Transmon ----
     EC                 = h * 200 * 1e6   # Charging energy [J]
@@ -90,7 +90,7 @@ def main():
     bx_hist, by_hist, bz_hist = [], [], []
 
     for i in range(1):
-        U, U_target = system.RX(np.pi/2)
+        U, U_target = system.RY(np.pi/2)
         U_proj = U[basis][:2, :2]
         
         # leakage = get_leakage(U_proj=U_proj)
@@ -201,6 +201,8 @@ def main():
         fig.canvas.draw()
         fig.canvas.flush_events()
 
+    print(f"Final State: ")
+    print(system.state[basis][:3])
     plt.ioff()
     plt.show()
         
