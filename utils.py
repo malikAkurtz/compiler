@@ -2,13 +2,17 @@ import numpy as np
 
 from Wavefunction import Wavefunction
 
-def get_spherical_coords(alpha, beta):    
+def get_spherical_coords(alpha, beta):
+    norm = np.sqrt(np.abs(alpha)**2 + np.abs(beta)**2)
+    alpha = alpha / norm
+    beta = beta / norm
+    
     phi = np.arctan2(alpha.imag, alpha.real)
     tau = np.arctan2(beta.imag, beta.real)
     
     azimuth = phi - tau
     
-    inclination = 2 * np.arccos(np.abs(alpha))
+    inclination = 2 * np.arccos(np.clip(np.abs(alpha), -1, 1))
     
     return azimuth, inclination
     

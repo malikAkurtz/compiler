@@ -13,8 +13,8 @@ from fidelity import *
 
 def main():
     # ---- Shared Hyper-parameters ----
-    n_cut              = 41              # Number of charge states, -n_cut : n_cut
-    theta              = 0.003            # U_kick angle
+    n_cut              = 101              # Number of charge states, -n_cut : n_cut
+    theta              = 0.03           # U_kick angle
     # if basis = "fock", everything will be done in the fock basis
     # if basis = "energy" everything will be done in the energy basis (no fock approximation)
     # i.e. has to be "fock" for Harmonic Oscillator, but acts as a hyperparameter for a Transmon
@@ -31,6 +31,7 @@ def main():
     # Derived Physical Constants
     spring_constant   = 1 / L
     angular_frequency = np.sqrt(spring_constant / C) # [rad/s]
+    print(f"Angular Frequency: {angular_frequency}")
         
     # ---- Create the Oscillator ----
     harmonic_oscillator = HarmonicOscillator(

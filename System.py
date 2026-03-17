@@ -23,7 +23,8 @@ class System():
         self.U_free_2 = Operator({self.basis: expm(-1j * self.oscillator.H0[self.basis] * (2 * self.T / 4) / hbar)})
         self.U_free_3 = Operator({self.basis: expm(-1j * self.oscillator.H0[self.basis] * (3 * self.T / 4) / hbar)})
         self.U_free_4 = Operator({self.basis: expm(-1j * self.oscillator.H0[self.basis] * (4 * self.T / 4) / hbar)})
-    
+        # print("U4")
+        # print(self.U_free_4["fock"])
         
     def free_evolve(self, duration: int):
         if duration == 1:
@@ -50,7 +51,7 @@ class System():
             
             self.free_evolve(duration=4)
             U[self.basis] = self.U_free_4[self.basis] @ U[self.basis]
-        
+                    
         return U, U_target
     
     def RX(self, theta_target: float):        
