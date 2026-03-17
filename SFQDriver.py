@@ -17,30 +17,13 @@ class SFQDriver():
             theta_prime = oscillator.theta_prime(theta) 
             
             self.U_kick = Operator(
-            basis_to_matrix={basis : expm( (1j * (-theta_prime) / 2) * oscillator.n["energy"] )}
+            basis_to_matrix={basis : expm( (-1j * (theta_prime) / 2) * oscillator.n["fock"] )}
             )
-        else:
-            # A = (oscillator.creation["fock"] - oscillator.annihilation["fock"]).copy()
-            
-            # eigenvalues, V = np.linalg.eig(A)
-            # V_inv = np.linalg.inv(V)
-            
-            # print("A:")
-            # print(A)
-            # print("A eigenvalues:")
-            # print(eigenvalues)
-            # print("A eigenvectors (V):")
-            # print(V)
-            # print("V inv")
-            # print(V_inv)
-            
-            # self.U_kick = Operator(
-            # basis_to_matrix={basis : V @ expm( (theta / 2) * np.diag(eigenvalues) ) @ V_inv}
-            # )
-                    
+        else:       
             self.U_kick = Operator(
             basis_to_matrix={basis : expm( (theta/2) * (oscillator.creation["fock"] - oscillator.annihilation["fock"]) )}
-            )            
+            )           
+
                         
     def apply_pulse(self, psi: Wavefunction):
         psi_new = psi.apply(operator=self.U_kick)

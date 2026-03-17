@@ -53,14 +53,14 @@ class Transmon(QuantumOscillator):
         self.frequency              = (self.energies[1] - self.energies[0]) / h 
         self.angular_frequency      = self.frequency * (2*np.pi)
         
-        if basis == "fock":  
-            self.annihilation, self.creation  = QuantumOscillator.create_ladder_operators(n_cut=n_cut)
-            self.H0["fock"] = hbar * self.angular_frequency * \
-                        ( (self.creation["fock"] @ self.annihilation["fock"]) ) \
-                        - ( (self.anharmonicity / 2) * (self.creation["fock"] @ self.creation["fock"]) \
-                            @ (self.annihilation["fock"] @ self.annihilation["fock"]))
+        # for Fock approximation
+        self.annihilation, self.creation  = QuantumOscillator.create_ladder_operators(n_cut=n_cut)
+        self.H0["fock"] = hbar * self.angular_frequency * \
+                    ( (self.creation["fock"] @ self.annihilation["fock"]) ) \
+                    - ( (self.anharmonicity / 2) * (self.creation["fock"] @ self.creation["fock"]) \
+                        @ (self.annihilation["fock"] @ self.annihilation["fock"]))
 
-            self.n["fock"] = 1j * self.r * (self.creation["fock"] - self.annihilation["fock"])
+        self.n["fock"] = 1j * self.r * (self.creation["fock"] - self.annihilation["fock"])
     
     def theta_prime(self, theta):
         return theta / self.r

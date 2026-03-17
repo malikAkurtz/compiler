@@ -13,12 +13,12 @@ from fidelity import *
 
 def main():
     # ---- Shared Hyper-parameters ----
-    n_cut              = 101              # Number of charge states, -n_cut : n_cut
+    n_cut              = 41              # Number of charge states, -n_cut : n_cut
     theta              = 0.03           # U_kick angle
     # if basis = "fock", everything will be done in the fock basis
     # if basis = "energy" everything will be done in the energy basis (no fock approximation)
     # i.e. has to be "fock" for Harmonic Oscillator, but acts as a hyperparameter for a Transmon
-    basis              = "energy"
+    basis              = "fock"
     
     # ---- Hyper-parameters for Transmon ----
     EC                 = h * 200 * 1e6   # Charging energy [J]
@@ -94,12 +94,12 @@ def main():
         U, U_target = system.RY(np.pi/2)
         U_proj = U[basis][:2, :2]
         
-        # leakage = get_leakage(U_proj=U_proj)
-        # print(f"Leakage Metric: {leakage}")
-        # process_fidelity = get_process_fidelity(U_proj=U_proj, U_target=U_target)
-        # print(f"Process Fidelity: {process_fidelity}")
-        # avg_gate_fidelity = get_average_gate_fidelity(process_fidelity=process_fidelity, leakage=leakage)
-        # print(f"Average Gate Fidelity in the Absence of a Loss Channel: {avg_gate_fidelity}")
+        leakage = get_leakage(U_proj=U_proj)
+        print(f"Leakage Metric: {leakage}")
+        process_fidelity = get_process_fidelity(U_proj=U_proj, U_target=U_target)
+        print(f"Process Fidelity: {process_fidelity}")
+        avg_gate_fidelity = get_average_gate_fidelity(process_fidelity=process_fidelity, leakage=leakage)
+        print(f"Average Gate Fidelity in the Absence of a Loss Channel: {avg_gate_fidelity}")
         
         probabilities = system.state.get_probabilities(basis)
         
