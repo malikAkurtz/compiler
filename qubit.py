@@ -11,6 +11,8 @@ from utils import *
 from constants import *
 from fidelity import *
 
+
+
 def main():
     # ---- Shared Hyper-parameters ----
     n_cut              = 41              # Number of charge states, -n_cut : n_cut
@@ -18,7 +20,7 @@ def main():
     # if basis = "fock", everything will be done in the fock basis
     # if basis = "energy" everything will be done in the energy basis (no fock approximation)
     # i.e. has to be "fock" for Harmonic Oscillator, but acts as a hyperparameter for a Transmon
-    basis              = "fock"
+    basis              = "energy"
     
     # ---- Hyper-parameters for Transmon ----
     EC                 = h * 200 * 1e6   # Charging energy [J]
@@ -56,11 +58,13 @@ def main():
     
     initial_state = Wavefunction(basis_to_coefs={basis : probability_amplitudes})
     
+    ramp = ["0100"]
     # ---- Instantiate the Driver ----
     sfq_driver = SFQDriver(
         theta=theta,
         oscillator=transmon,
-        basis=basis
+        basis=basis,
+        ramp=ramp
     )
         
     # ---- Instantiate System Object ----
@@ -91,8 +95,32 @@ def main():
     bx_hist, by_hist, bz_hist = [], [], []
 
     for i in range(1):
-        U, U_target = system.RY(np.pi/2)
+        X_TARGET = np.array([
+            [np.cos(np.pi / 2), -1j * np.sin(np.pi / 2)],
+            [-1j * np.sin(np.pi / 2), np.cos(np.pi / 2)]
+        ])
+        
+        theta_target = np.pi/2
+        
+        RY_TARGET = np.array([
+            [np.cos(theta_target / 2), -np.sin(theta_target / 2)],
+            [np.sin(theta_target / 2), np.cos(theta_target / 2)]
+        ])
+        RX_TARGET = np.array([
+            [np.cos(theta_target / 2), -1j * np.sin(theta_target / 2)],
+            [-1j * np.sin(theta_target / 2), np.cos(theta_target / 2)]
+        ])
+        H_TARGET = np.array([
+            [1.0, 1.0] / np.sqrt(2),
+            [1.0, -1.0] / np.sqrt(2)
+        ])        
+        
+        system.RY(theta_target)
+        U = system.state.get_accumulated_unitary()
+        
         U_proj = U[basis][:2, :2]
+        U_target = RY_TARGET
+        
         
         leakage = get_leakage(U_proj=U_proj)
         print(f"Leakage Metric: {leakage}")

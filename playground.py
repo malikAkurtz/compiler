@@ -98,6 +98,28 @@ def problem_5():
     
     print(theta)
     
+def problem_6():
+    c = np.array([
+        [2],
+        [-5],
+        [-3]
+    ])
+    
+    A = np.array([
+        [3, 6, -2],
+        [-1, -3, -1],
+        [-4, -7, 3]
+    ])
+    
+    A_T = A.T
+    
+    A_T = A_T[np.ix_([1, 2], [0, 2])]
+    
+    
+    y_1_3 = np.linalg.solve(A_T, np.array([c[0], c[2]]).reshape(-1, 1))
+    
+    print(y_1_3)
+    
 if __name__=="__main__":
     
-    problem_5()
+    problem_6()

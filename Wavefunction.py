@@ -10,7 +10,12 @@ class Wavefunction():
     
     def __init__(self, basis_to_coefs: dict):
         self.basis_to_coefs = basis_to_coefs
-    
+        
+        self.U = Operator({})
+        
+        for basis, coefs in basis_to_coefs.items():
+            self.U[basis] = np.eye(len(coefs))
+        
     def get_projection(self, basis: str):
         return self.basis_to_coefs[basis]
     
@@ -31,9 +36,16 @@ class Wavefunction():
         
         # Apply the operator to each basis representation of the wavefunction
         for basis, coefs in self.basis_to_coefs.items():
-            new_basis_to_coefs[basis] = (operator[basis] @ coefs.reshape(-1, 1)).flatten()
+            self.basis_to_coefs[basis] = (operator[basis] @ coefs.reshape(-1, 1)).flatten()
+            self.U[basis] = operator[basis] @ self.U[basis]
         
-        return Wavefunction(new_basis_to_coefs)
+    def get_accumulated_unitary(self):
+        return self.U
+
+    def reset_accumulated_unitary(self):
+        for basis, coefs in self.U.basis_to_matrix.items():
+            self.U[basis] = np.eye(len(coefs))
     
     def __delitem__(self, key):
         del self.basis_to_coefs[key]
+        
