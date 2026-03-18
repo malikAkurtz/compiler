@@ -9,11 +9,12 @@ from Wavefunction import Wavefunction
 
 class SFQDriver():
     
-    def __init__(self, theta: float, oscillator: QuantumOscillator, basis: str, ramp: list[str]):
+    def __init__(self, theta: float, oscillator: QuantumOscillator, basis: str, ramp: list[str], clock_multiplier=4):
         self.theta = theta
         self.ramp = ramp
         self.oscillator = oscillator
         self.basis = basis
+        self.clock_multiplier = clock_multiplier
         
         if basis == "energy":
             theta_prime = oscillator.theta_prime(theta) 
@@ -58,6 +59,7 @@ class SFQDriver():
                         H0=self.oscillator.H0,
                         T=(2*np.pi) / self.oscillator.angular_frequency,
                         duration=1,
+                        clock_multiplier=self.clock_multiplier,
                         basis=self.basis
                     )
                 else:
@@ -68,29 +70,19 @@ class SFQDriver():
                         state=state, 
                         H0=self.oscillator.H0,
                         T=(2*np.pi) / self.oscillator.angular_frequency,
-                        duration=1,
+                        duration=4,
+                        clock_multiplier=self.clock_multiplier,
                         basis=self.basis
                     )
         
-        
     @staticmethod
     def flip_X_ramp(ramp: str):
-        if ramp == "0000": # preserve I
-            return "0000"
-        
-        elif ramp == "1000": # preserve RY
-            return "1000"
-        
-        elif ramp == "0100": # flip RX
-            return "0001"
-        
-        elif ramp == "0001":
-            return "0100"
-        
-        elif ramp == "1100":
-            return "1001"
-        
-        elif ramp == "1001":
-            return "1100"
+        n = len(ramp)
+        flipped = ['0'] * n
+        for i in range(n):
+            if ramp[i] == '1':
+                new_pos = (n - i) % n
+                flipped[new_pos] = '1'
+        return ''.join(flipped)
         
         

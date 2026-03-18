@@ -8,29 +8,23 @@ from Wavefunction import Wavefunction
 from constants import *
 
 class System():
-    def __init__(self, oscillator: QuantumOscillator, sfq_driver: SFQDriver, initial_state: Wavefunction, basis: str):
+    def __init__(self, oscillator: QuantumOscillator, sfq_driver: SFQDriver, initial_state: Wavefunction, basis: str, N: int):
         self.oscillator = oscillator
         self.sfq_driver = sfq_driver
         self.state      = initial_state
+        self.N          = N
         
         self.T          = (2*np.pi) / oscillator.angular_frequency # Qubit period [s]
         
         self.basis      = basis
 
     @staticmethod
-    def free_evolve(state: Wavefunction, H0: Operator, T: float, duration: int, basis: str):
-        if duration == 1:
-            state.apply(operator=Operator({basis: expm(-1j * H0[basis] * (1 * T / 4) / hbar)}))
-        elif duration == 2:
-            state.apply(operator=Operator({basis: expm(-1j * H0[basis] * (2 * T / 4) / hbar)}))
-        elif duration == 3:
-            state.apply(operator=Operator({basis: expm(-1j * H0[basis] * (3 * T / 4) / hbar)}))
-        elif duration == 4:
-            state.apply(operator=Operator({basis: expm(-1j * H0[basis] * (4 * T / 4) / hbar)}))
+    def free_evolve(state: Wavefunction, H0: Operator, T: float, duration: int, clock_multiplier: int, basis: str):
+        state.apply(operator=Operator({basis: expm(-1j * H0[basis] * (duration * T / clock_multiplier) / hbar)}))
 
     def RY(self, theta_target: float):
         
-        N = int(np.round(np.abs(theta_target) / self.sfq_driver.theta)) + 1 # number of total kicks/sfq pulses
+        N = self.N
         
         self.sfq_driver.on_ramp_evolve(self.state)
         
@@ -41,7 +35,7 @@ class System():
                 state=self.state,
                 H0=self.oscillator.H0,
                 T=self.T,
-                duration=4,
+                duration=self.sfq_driver.clock_multiplier,
                 basis=self.basis
             )
             
@@ -49,7 +43,7 @@ class System():
                         
     def RX(self, theta_target: float):        
         
-        N = int(np.round(theta_target / self.sfq_driver.theta)) + 1 # number of total kicks/sfq pulses
+        N = self.N
         
         self.sfq_driver.on_ramp_evolve(self.state)
         
