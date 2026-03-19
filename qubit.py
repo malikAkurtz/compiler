@@ -18,6 +18,7 @@ PLOT = True
 def main():
     # ---- Shared Hyper-parameters ----
     n_cut              = 41             # Number of charge states, -n_cut : n_cut
+    n_proj             = 7              # number of states to truncate to
     theta              = 0.03           # U_kick angle
     clock_multiplier   = 8
     ramp               = []             # no ramp
@@ -49,11 +50,10 @@ def main():
         charging_energy=EC,
         EJ_EC=EJ_EC,
         n_cut=n_cut,
-        basis=basis
     )
     
     # ---- Creating Our Initial Quantum State in Energy/Fock Basis, |0> ----
-    probability_amplitudes = (n_cut) * [0]
+    probability_amplitudes = (n_proj) * [0]
     probability_amplitudes[0] = 1
     
     probability_amplitudes = np.array(probability_amplitudes)
@@ -106,7 +106,7 @@ def main():
         # Store Bloch vector history for trail
         bx_hist, by_hist, bz_hist = [], [], []
 
-    for i in range(1):
+    for i in range(1):        
         X_TARGET = np.array([
             [np.cos(np.pi / 2), -1j * np.sin(np.pi / 2)],
             [-1j * np.sin(np.pi / 2), np.cos(np.pi / 2)]
@@ -122,18 +122,18 @@ def main():
         H_TARGET = np.array([
             [1.0, 1.0] / np.sqrt(2),
             [1.0, -1.0] / np.sqrt(2)
-        ])        
+        ])
+        
+        TARGET = RY_TARGET
         
         system.RY(theta_target)
         U = system.state.get_accumulated_unitary()
         
         U_proj = U[basis][:2, :2]
-        U_target = RY_TARGET
-        
         
         leakage = get_leakage(U_proj=U_proj)
         # print(f"Leakage Metric: {leakage}")
-        process_fidelity = get_process_fidelity(U_proj=U_proj, U_target=U_target)
+        process_fidelity = get_process_fidelity(U_proj=U_proj, U_target=TARGET)
         # print(f"Process Fidelity: {process_fidelity}")
         avg_gate_fidelity = get_average_gate_fidelity(process_fidelity=process_fidelity, leakage=leakage)
         # print(f"Average Gate Fidelity in the Absence of a Loss Channel: {avg_gate_fidelity}")
@@ -230,8 +230,8 @@ def main():
             
             # ---- Fock Populations ----
             ax_fock.cla()
-            ax_fock.bar(np.arange(n_cut), probabilities, color='steelblue')
-            ax_fock.set_xlim(-0.5, n_cut - 0.5)
+            ax_fock.bar(np.arange(n_proj), probabilities, color='steelblue')
+            ax_fock.set_xlim(-0.5, n_proj - 0.5)
             ax_fock.set_ylim(0, 1)
             ax_fock.set_xlabel("Energy (Or Fock) State |n⟩", fontsize=12)
             ax_fock.set_ylabel("Probability", fontsize=12)

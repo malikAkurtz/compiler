@@ -50,11 +50,10 @@ def main():
         charging_energy=EC,
         EJ_EC=EJ_EC,
         n_cut=n_cut,
-        basis=basis
     )
     
     # ---- Creating Our Initial Quantum State in Energy/Fock Basis, |0> ----
-    probability_amplitudes = (n_cut) * [0]
+    probability_amplitudes = (n_proj) * [0]
     probability_amplitudes[0] = 1
     
     probability_amplitudes = np.array(probability_amplitudes)
@@ -136,15 +135,15 @@ def main():
                         [1.0, -1.0] / np.sqrt(2)
                     ])        
                     
+                    TARGET = RY_TARGET
+                    
                     system.RY(theta_target)
                     U = system.state.get_accumulated_unitary()
                     
-                    U_proj = U[basis][:2, :2]
-                    U_target = RY_TARGET
-                    
+                    U_proj = U[basis][:2, :2]                    
                     
                     leakage = get_leakage(U_proj=U_proj)
-                    process_fidelity = get_process_fidelity(U_proj=U_proj, U_target=U_target)
+                    process_fidelity = get_process_fidelity(U_proj=U_proj, U_target=TARGET)
                     avg_gate_fidelity = get_average_gate_fidelity(process_fidelity=process_fidelity, leakage=leakage)
                     
                     if avg_gate_fidelity > best_fidelity:

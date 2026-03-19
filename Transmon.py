@@ -10,7 +10,7 @@ class Transmon(QuantumOscillator):
     """
     A Transmon system
     """
-    def __init__(self, charging_energy: float, EJ_EC: float, n_cut: int, basis: str):
+    def __init__(self, charging_energy: float, EJ_EC: float, n_cut: int):
         self.EC                           = charging_energy
         self.EJ                           = EJ_EC * self.EC # Josephson energy
         self.r                            = (1/2)*(EJ_EC / 2)**(1/4) # charge zero-point-fluctuation
@@ -58,7 +58,6 @@ class Transmon(QuantumOscillator):
                         @ (self.annihilation["fock"] @ self.annihilation["fock"]))
 
         
-    
     def theta_prime(self, theta):
         return theta / self.r
                         

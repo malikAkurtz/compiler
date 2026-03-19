@@ -9,13 +9,12 @@ from Wavefunction import Wavefunction
 
 class SFQDriver():
     
-    def __init__(self, clock_multiplier: int, theta: float, oscillator: QuantumOscillator, basis: str, ramp: list[str], n_proj: int):
+    def __init__(self, clock_multiplier: int, theta: float, oscillator: QuantumOscillator, basis: str, ramp: list[str]):
+        self.clock_multiplier = clock_multiplier
         self.theta = theta
-        self.ramp = ramp
         self.oscillator = oscillator
         self.basis = basis
-        self.clock_multiplier = clock_multiplier
-        self.n_proj = n_proj
+        self.ramp = ramp
         
         if basis == "energy":
             theta_prime = oscillator.theta_prime(theta) 

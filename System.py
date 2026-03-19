@@ -13,12 +13,11 @@ class System():
         self.oscillator = oscillator
         self.sfq_driver = sfq_driver
         self.state      = initial_state
+        self.basis      = basis
         self.N          = N
         
         self.T          = (2*np.pi) / oscillator.angular_frequency # Qubit period [s]
         
-        self.basis      = basis
-
     @staticmethod
     def free_evolve(state: Wavefunction, H0: Operator, T: float, duration: int, clock_multiplier: int, basis: str):
         state.apply(operator=Operator({basis: expm(-1j * H0[basis] * (duration * T / clock_multiplier) / hbar)}))

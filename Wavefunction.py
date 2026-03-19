@@ -17,11 +17,8 @@ class Wavefunction():
         for basis, coefs in basis_to_coefs.items():
             self.U[basis] = np.eye(len(coefs))
         
-    def get_projection(self, basis: str, dimension: Optional[int] | None = None):
-        if dimension:
-            return self.basis_to_coefs[basis][:dimension, :dimension]
-        else:
-            return self.basis_to_coefs[basis]
+    def get_projection(self, basis: str):
+        return self.basis_to_coefs[basis]
     
     def __getitem__(self, key):
         return self.get_projection(basis=key)
@@ -35,13 +32,14 @@ class Wavefunction():
     def get_probabilities(self, basis: str):
         return np.abs(self.basis_to_coefs[basis])**2
             
-    def apply(self, operator: Operator, n_proj: int):
+    def apply(self, operator: Operator):
         new_basis_to_coefs = {}
         
         # Apply the operator to each basis representation of the wavefunction
         for basis, coefs in self.basis_to_coefs.items():
-            self.basis_to_coefs[basis] = (operator[basis][n_proj] @ coefs.reshape(-1, 1)).flatten()
-            self.U[basis] = operator[basis] @ self.U[basis]
+            n_proj = len(coefs)
+            self.basis_to_coefs[basis] = (operator[basis][:n_proj, :n_proj] @ coefs.reshape(-1, 1)).flatten()
+            self.U[basis] = operator[basis][:n_proj, :n_proj] @ self.U[basis]
         
     def get_accumulated_unitary(self):
         return self.U

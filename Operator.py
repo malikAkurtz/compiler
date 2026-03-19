@@ -9,11 +9,8 @@ class Operator():
     def __init__(self, basis_to_matrix: dict):
         self.basis_to_matrix = basis_to_matrix
     
-    def get_projection(self, basis: str, dimension: Optional[int] | None = None):
-        if dimension:
-            return self.basis_to_matrix[basis][:dimension, :dimension]
-        else:
-            return self.basis_to_matrix[basis]
+    def get_projection(self, basis: str):
+        return self.basis_to_matrix[basis]
     
     def __getitem__(self, key):
         return self.get_projection(basis=key)
