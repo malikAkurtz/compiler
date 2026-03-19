@@ -17,20 +17,19 @@ PLOT = True
 
 def main():
     # ---- Shared Hyper-parameters ----
-    n_cut              = 41             # Number of charge states, -n_cut : n_cut
+    n_cut              = 201             # Number of charge states, -n_cut : n_cut
     n_proj             = 7              # number of states to truncate to
     theta              = 0.03           # U_kick angle
     clock_multiplier   = 8
     ramp               = ['11000000', '10100000', '00000000', '00000000']
-    ramp               = []
     # if basis = "fock", everything will be done in the fock basis
     # if basis = "energy" everything will be done in the energy basis (no fock approximation)
     # i.e. has to be "fock" for Harmonic Oscillator, but acts as a hyperparameter for a Transmon
     basis              = "energy"
     
     # ---- Hyper-parameters for Transmon ----
-    EC                 = h * 200 * 1e6   # Charging energy [J]
-    EJ_EC              = 50              # EJ/EC ratio
+    EC                 = h * 250 * 1e6   # Charging energy [J]
+    EJ_EC              = 69              # EJ/EC ratio
     
     # ---- Hyper-parameters for Naive Harmonic Oscillator Qubit ----
     C          = 100e-15 # [F]
@@ -98,7 +97,6 @@ def main():
     
     # Number of kicks in pulse train
     N = 47
-    N = int(np.round(theta_target / theta))
     
     system = System(
         clock_multiplier=clock_multiplier,
@@ -122,13 +120,13 @@ def main():
         [1.0, -1.0] / np.sqrt(2)
     ])
     
-    TARGET = RX_TARGET
+    TARGET = RY_TARGET
 
     for i in range(1):
         
         system.state.reset_accumulated_unitary() 
         
-        system.RX()
+        system.RY()
         U = system.state.get_accumulated_unitary()
         
         U_proj = U[basis][:2, :2]

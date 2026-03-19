@@ -143,7 +143,7 @@ def main():
                     
                     TARGET = RY_TARGET
                     
-                    system.RY(theta_target)
+                    system.RY()
                     U = system.state.get_accumulated_unitary()
                     
                     U_proj = U[basis][:2, :2]                    
