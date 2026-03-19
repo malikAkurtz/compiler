@@ -22,6 +22,7 @@ def main():
     theta              = 0.03           # U_kick angle
     clock_multiplier   = 8
     ramp               = ['11000000', '10100000', '00000000', '00000000']
+    ramp               = []
     # if basis = "fock", everything will be done in the fock basis
     # if basis = "energy" everything will be done in the energy basis (no fock approximation)
     # i.e. has to be "fock" for Harmonic Oscillator, but acts as a hyperparameter for a Transmon
@@ -58,12 +59,6 @@ def main():
     
     probability_amplitudes = np.array(probability_amplitudes)
     probability_amplitudes = probability_amplitudes / np.linalg.norm(probability_amplitudes)
-    
-    # Target Unitary rotation
-    theta_target = np.pi/2
-    
-    # Number of kicks in pulse train
-    N = 47
         
     initial_state = Wavefunction(basis_to_coefs={basis : probability_amplitudes})
     
@@ -74,16 +69,6 @@ def main():
         oscillator=transmon,
         basis=basis,
         ramp=ramp,
-    )
-        
-    # ---- Instantiate System Object ----
-    system = System(
-        clock_multiplier=clock_multiplier,
-        oscillator=transmon,
-        sfq_driver=sfq_driver,
-        initial_state=initial_state,
-        basis=basis,
-        N=N
     )
     
     populations = [[] for i in range(n_cut)] # to store measurement probabilities
@@ -105,31 +90,45 @@ def main():
 
         # Store Bloch vector history for trail
         bx_hist, by_hist, bz_hist = [], [], []
+        
+    # ---- Instantiate System Object ----
+    
+    # Target Unitary rotation
+    theta_target = np.pi/2
+    
+    # Number of kicks in pulse train
+    N = 47
+    N = int(np.round(theta_target / theta))
+    
+    system = System(
+        clock_multiplier=clock_multiplier,
+        oscillator=transmon,
+        sfq_driver=sfq_driver,
+        initial_state=initial_state,
+        basis=basis,
+        N=N
+    )
+    
+    RY_TARGET = np.array([
+        [np.cos(theta_target / 2), -np.sin(theta_target / 2)],
+        [np.sin(theta_target / 2), np.cos(theta_target / 2)]
+    ])
+    RX_TARGET = np.array([
+        [np.cos(theta_target / 2), -1j * np.sin(theta_target / 2)],
+        [-1j * np.sin(theta_target / 2), np.cos(theta_target / 2)]
+    ])
+    H_TARGET = np.array([
+        [1.0, 1.0] / np.sqrt(2),
+        [1.0, -1.0] / np.sqrt(2)
+    ])
+    
+    TARGET = RX_TARGET
 
-    for i in range(100):
+    for i in range(1):
         
         system.state.reset_accumulated_unitary() 
         
-        X_TARGET = np.array([
-            [np.cos(np.pi / 2), -1j * np.sin(np.pi / 2)],
-            [-1j * np.sin(np.pi / 2), np.cos(np.pi / 2)]
-        ])
-        RY_TARGET = np.array([
-            [np.cos(theta_target / 2), -np.sin(theta_target / 2)],
-            [np.sin(theta_target / 2), np.cos(theta_target / 2)]
-        ])
-        RX_TARGET = np.array([
-            [np.cos(theta_target / 2), -1j * np.sin(theta_target / 2)],
-            [-1j * np.sin(theta_target / 2), np.cos(theta_target / 2)]
-        ])
-        H_TARGET = np.array([
-            [1.0, 1.0] / np.sqrt(2),
-            [1.0, -1.0] / np.sqrt(2)
-        ])
-        
-        TARGET = RY_TARGET
-        
-        system.RY(theta_target)
+        system.RX()
         U = system.state.get_accumulated_unitary()
         
         U_proj = U[basis][:2, :2]

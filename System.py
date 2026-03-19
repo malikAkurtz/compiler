@@ -22,7 +22,7 @@ class System():
     def free_evolve(state: Wavefunction, H0: Operator, T: float, duration: int, clock_multiplier: int, basis: str):
         state.apply(operator=Operator({basis: expm(-1j * H0[basis] * (duration * T / clock_multiplier) / hbar)}))
 
-    def RY(self, theta_target: float):
+    def RY(self):
         
         N = self.N
         
@@ -42,7 +42,7 @@ class System():
             
         self.sfq_driver.off_ramp_evolve(self.state)
                         
-    def RX(self, theta_target: float):        
+    def RX(self):        
         
         N = self.N
         
@@ -55,7 +55,7 @@ class System():
                 state=self.state,
                 H0=self.oscillator.H0,
                 T=self.T,
-                duration=3,
+                duration=4,
                 basis=self.basis
             )
             
@@ -66,18 +66,15 @@ class System():
                 state=self.state,
                 H0=self.oscillator.H0,
                 T=self.T,
-                duration=1,
+                duration=4,
                 basis=self.basis
             )
             
         self.sfq_driver.off_ramp_evolve(self.state)
-    
-    def X(self):
-        return self.RX(np.pi) # ONLY FOR SINGLE QUBIT CASE
             
     def Hadamard(self):
         # RY(pi/2) rotation
-        self.RY(np.pi/2)
+        self.RY()
         # RZ(pi) rotation
         System.free_evolve(
                 state=self.state,
