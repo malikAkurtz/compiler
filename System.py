@@ -8,7 +8,8 @@ from Wavefunction import Wavefunction
 from constants import *
 
 class System():
-    def __init__(self, oscillator: QuantumOscillator, sfq_driver: SFQDriver, initial_state: Wavefunction, basis: str, N: int):
+    def __init__(self, clock_multiplier: int, oscillator: QuantumOscillator, sfq_driver: SFQDriver, initial_state: Wavefunction, basis: str, N: int):
+        self.clock_multiplier = clock_multiplier
         self.oscillator = oscillator
         self.sfq_driver = sfq_driver
         self.state      = initial_state
@@ -32,6 +33,7 @@ class System():
             self.sfq_driver.apply_pulse(self.state)
             
             System.free_evolve(
+                clock_multiplier=self.clock_multiplier,
                 state=self.state,
                 H0=self.oscillator.H0,
                 T=self.T,
@@ -50,6 +52,7 @@ class System():
         for _ in range(N):
             
             System.free_evolve(
+                clock_multiplier=self.clock_multiplier,
                 state=self.state,
                 H0=self.oscillator.H0,
                 T=self.T,
@@ -60,6 +63,7 @@ class System():
             self.sfq_driver.apply_pulse(self.state)
             
             System.free_evolve(
+                clock_multiplier=self.clock_multiplier,
                 state=self.state,
                 H0=self.oscillator.H0,
                 T=self.T,

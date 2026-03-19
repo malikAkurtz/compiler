@@ -20,6 +20,9 @@ class Transmon(QuantumOscillator):
             basis_to_matrix={"charge" : np.diag([n for n in range(int(-(n_cut-1)/2), int((n_cut-1)/2) + 1)])}
         )   
         
+        self.annihilation, self.creation  = QuantumOscillator.create_ladder_operators(n_cut=n_cut)
+        self.n["fock"] = 1j * self.r * (self.creation["fock"] - self.annihilation["fock"])
+        
         # Kinetic energy operator
         self.T                            = Operator(
             basis_to_matrix={"charge" : 4*self.EC*(self.n["charge"]**2)}
@@ -43,24 +46,18 @@ class Transmon(QuantumOscillator):
         self.N                            = Operator(
             basis_to_matrix={"energy": np.diag(np.arange(n_cut))}
         )
-        
-        self.n["energy"] = matrix_change_basis(
-                            transformation_matrix=self.energy_states,
-                            matrix=self.n["charge"]
-                            )
     
         self.anharmonicity          = (self.energies[2] - self.energies[1]) - (self.energies[1] - self.energies[0])
         self.frequency              = (self.energies[1] - self.energies[0]) / h 
         self.angular_frequency      = self.frequency * (2*np.pi)
         
-        # for Fock approximation
-        self.annihilation, self.creation  = QuantumOscillator.create_ladder_operators(n_cut=n_cut)
+        # for Fock approximation, note that this is an approximation
         self.H0["fock"] = hbar * self.angular_frequency * \
                     ( (self.creation["fock"] @ self.annihilation["fock"]) ) \
                     - ( (self.anharmonicity / 2) * (self.creation["fock"] @ self.creation["fock"]) \
                         @ (self.annihilation["fock"] @ self.annihilation["fock"]))
 
-        self.n["fock"] = 1j * self.r * (self.creation["fock"] - self.annihilation["fock"])
+        
     
     def theta_prime(self, theta):
         return theta / self.r

@@ -91,6 +91,7 @@ def main():
                     
                 # ---- Instantiate System Object ----
                 system = System(
+                    clock_multiplier=clock_multiplier,
                     oscillator=transmon,
                     sfq_driver=sfq_driver,
                     initial_state=initial_state,

@@ -9,7 +9,7 @@ from Wavefunction import Wavefunction
 
 class SFQDriver():
     
-    def __init__(self, theta: float, oscillator: QuantumOscillator, basis: str, ramp: list[str], clock_multiplier=4):
+    def __init__(self, theta: float, oscillator: QuantumOscillator, basis: str, ramp: list[str], clock_multiplier: int):
         self.theta = theta
         self.ramp = ramp
         self.oscillator = oscillator
@@ -41,6 +41,7 @@ class SFQDriver():
                         H0=self.oscillator.H0,
                         T=(2*np.pi) / self.oscillator.angular_frequency,
                         duration=1,
+                        clock_multiplier=self.clock_multiplier,
                         basis=self.basis
                     )
                 else:
