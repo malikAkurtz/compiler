@@ -41,11 +41,6 @@ class Transmon(QuantumOscillator):
         self.energies, self.energy_states = np.linalg.eigh(self.H0["charge"]) # Eigenvalues + eigenvectors of Hamiltonian operator (charge basis)
         
         self.H0["energy"] = np.diag(self.energies)
-
-        # Number operator
-        self.N                            = Operator(
-            basis_to_matrix={"energy": np.diag(np.arange(n_cut))}
-        )
     
         self.anharmonicity          = (self.energies[2] - self.energies[1]) - (self.energies[1] - self.energies[0])
         self.frequency              = (self.energies[1] - self.energies[0]) / h 

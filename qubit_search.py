@@ -17,7 +17,7 @@ PLOT = False
 
 def main():
     # ---- Shared Hyper-parameters ----
-    n_cut              = 41             # Number of charge states, -n_cut : n_cut
+    n_cut              = 201             # Number of charge states, -n_cut : n_cut
     n_proj             = 7              # number of states to truncate to
     theta              = 0.03           # U_kick angle
     clock_multiplier   = 8
@@ -28,8 +28,8 @@ def main():
     basis              = "energy"
     
     # ---- Hyper-parameters for Transmon ----
-    EC                 = h * 200 * 1e6   # Charging energy [J]
-    EJ_EC              = 50              # EJ/EC ratio
+    EC                 = h * 250 * 1e6   # Charging energy [J]
+    EJ_EC              = 69              # EJ/EC ratio
     
     # ---- Hyper-parameters for Naive Harmonic Oscillator Qubit ----
     C          = 100e-15 # [F]
@@ -69,10 +69,16 @@ def main():
     N_base = int(np.round(theta_target / theta))
 
     for N in range(N_base - 5, N_base + 5):
+        if best_fidelity >= 0.9999:
+            break
         if N < 0:
             continue
         for ramp_length in range(1, 6):
+            if best_fidelity >= 0.9999:
+                break
             for ramp in product(ramp_options, repeat=ramp_length):
+                if best_fidelity >= 0.9999:
+                    break
                 ramp = list(ramp)
                 
                 # ---- Instantiate the Initial State of the Wavefunction ----

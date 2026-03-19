@@ -47,6 +47,15 @@ class SFQDriver():
                 else:
                     # kick
                     self.apply_pulse(state)
+                    
+                    System.free_evolve(
+                        state=state, 
+                        H0=self.oscillator.H0,
+                        T=(2*np.pi) / self.oscillator.angular_frequency,
+                        duration=1,
+                        clock_multiplier=self.clock_multiplier,
+                        basis=self.basis
+                    )
     
     def off_ramp_evolve(self, state: Wavefunction):
         flipped_ramps = [SFQDriver.flip_X_ramp(r) for r in self.ramp][::-1]

@@ -21,7 +21,7 @@ def main():
     n_proj             = 7              # number of states to truncate to
     theta              = 0.03           # U_kick angle
     clock_multiplier   = 8
-    ramp               = []             # no ramp
+    ramp               = ['11000000', '10100000', '00000000', '00000000']
     # if basis = "fock", everything will be done in the fock basis
     # if basis = "energy" everything will be done in the energy basis (no fock approximation)
     # i.e. has to be "fock" for Harmonic Oscillator, but acts as a hyperparameter for a Transmon
@@ -63,7 +63,7 @@ def main():
     theta_target = np.pi/2
     
     # Number of kicks in pulse train
-    N = int(np.round(theta_target / theta))
+    N = 47
         
     initial_state = Wavefunction(basis_to_coefs={basis : probability_amplitudes})
     
@@ -106,7 +106,10 @@ def main():
         # Store Bloch vector history for trail
         bx_hist, by_hist, bz_hist = [], [], []
 
-    for i in range(1):        
+    for i in range(100):
+        
+        system.state.reset_accumulated_unitary() 
+        
         X_TARGET = np.array([
             [np.cos(np.pi / 2), -1j * np.sin(np.pi / 2)],
             [-1j * np.sin(np.pi / 2), np.cos(np.pi / 2)]
