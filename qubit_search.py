@@ -53,7 +53,7 @@ def main():
     )
     
     # ---- Creating Our Initial Quantum State in Energy/Fock Basis, |0> ----
-    probability_amplitudes = (n_proj) * [0]
+    probability_amplitudes    = (n_proj) * [0]
     probability_amplitudes[0] = 1
     
     probability_amplitudes = np.array(probability_amplitudes)

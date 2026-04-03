@@ -1,6 +1,8 @@
 import numpy as np
 from typing import Optional
 
+from PauliMatrices import PAULI_MATRICES
+
 class Operator():
     """
     An Operator is a matrix in a chosen basis
@@ -23,4 +25,3 @@ class Operator():
     
     def __delitem__(self, key):
         del self.basis_to_matrix[key]
-    

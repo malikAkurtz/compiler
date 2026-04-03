@@ -1,3 +1,18 @@
-1) Refactor HarmonicOscillator to mirror transmon and then simply replace transmon with harmonic oscillator and compare
-2) Run through harmonic oscillator example with n_cut=3 on paper
-3) Implement DRAG
+
+(a) Set-up (where you go atom-to-algorithm from pulse shape + JJ-C transmon 
+Hamiltonian to Grover unitary matrices over time, 
+maybe even put leakage into them)
+
+* n = 2 Grover search example by hand
+* Implement it in my code
+* n = 4 Grover search example by hand
+* Finalize which gate set is necessary for Grover search
+* Implemenent CZ gate in code
+
+My plan for the next 1.5 weeks (for the mini-presentation on April 8), is as follows:
+Explain in detail how the Shillito paper models SFQ kicks using a pulse train with appropriate examples
+Explain how the paper implements a SFQ DRAG analog using on/off ramp unitaries encoded as binary strings
+Explain how the paper defines fidelity metrics and decomposes a target unitary into a linear combination of I, pauli_x, pauli_y, pauli_z for error analysis (they also do model deviations in anharmonicity, qubit frequency, time jitter, the kick angle, and the qubit decay rate "gamma", although it will take me time to model how these affect the fidelity of the target unitary, for example I do not yet know what "time jitter" is at this point)
+Work through the math n=4 (trivial single qubit) Grover Search using the Shillito framework
+Figure out a gate set for Grover's search
+Simulate the n=4 case in my code (this will require me to augment my current simulator to work for two qubits instead of the single qubit simulator I have at the moment, might be harder than I anticipate)

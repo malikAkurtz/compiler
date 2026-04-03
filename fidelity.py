@@ -1,11 +1,19 @@
 import numpy as np
+from Operator import Operator
+from utils import get_pauli_coefs
 
-def get_leakage(U_proj: np.ndarray):
-    return 1 - ( (np.trace(U_proj @ U_proj.conjugate().T)) / 2 )
+def get_L1(U: np.ndarray, basis):
+        return 1 - np.sum(np.abs(get_pauli_coefs(U, basis=basis))**2)
 
-def get_process_fidelity(U_proj: np.ndarray, U_target: np.ndarray):
-    return np.abs( np.trace(U_target.conjugate().T @ U_proj) )**2 / 4
+def get_r(coefs: np.ndarray):
+    return np.linalg.norm(coefs)
 
-def get_average_gate_fidelity(process_fidelity: float, leakage: float):
-    fidelity = ( (2 * process_fidelity) + 1 - leakage ) / 3
+def get_delta(r: float):
+    return 1 - r
+
+def get_process_fidelity(U_Q: Operator, U_target: Operator, basis: str):
+    return np.abs( np.trace(U_target[basis].conjugate().T @ U_Q[basis]) )**2 / 4
+
+def get_average_gate_fidelity(process_fidelity: float, L1: float):
+    fidelity = ( (2 * process_fidelity) + 1 - L1 ) / 3
     return fidelity.real

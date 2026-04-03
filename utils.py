@@ -1,6 +1,6 @@
 import numpy as np
 
-from Wavefunction import Wavefunction
+from PauliMatrices import PAULI_MATRICES
 
 def get_spherical_coords(alpha, beta):
     norm = np.sqrt(np.abs(alpha)**2 + np.abs(beta)**2)
@@ -67,6 +67,21 @@ def fock_to_phase(self, fock_coefs, phases: np.ndarray):
             
     return vector_change_basis(transformation_matrix=linear_map, vector=fock_coefs)
     
+def to_ket(coefs: np.ndarray):
+    return coefs.reshape(-1, 1)
+
+def to_bra(coefs: np.array):
+    return np.array([c.conj() for c in coefs])
+
+def get_pauli_coefs(U: np.ndarray, basis: str):
+        if U[basis].shape != (2, 2):
+            raise Exception("Matrix is Not (2 x 2)")
+
+        coefs = np.zeros(len(PAULI_MATRICES), dtype=complex)
     
+        for idx, matrix in enumerate(PAULI_MATRICES):
+            coefs[idx] = np.trace(matrix @ U[basis]) / 2
+            
+        return coefs
 
 

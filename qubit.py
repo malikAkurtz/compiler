@@ -6,6 +6,7 @@ from System import System
 from Transmon import Transmon
 from HarmonicOscillator import HarmonicOscillator
 from SFQDriver import SFQDriver
+from Operator import Operator
 from Wavefunction import Wavefunction
 from utils import *
 from constants import *
@@ -17,11 +18,12 @@ PLOT = True
 
 def main():
     # ---- Shared Hyper-parameters ----
-    n_cut              = 201             # Number of charge states, -n_cut : n_cut
+    n_cut              = 201            # Number of charge states, -n_cut : n_cut
     n_proj             = 7              # number of states to truncate to
     theta              = 0.03           # U_kick angle
     clock_multiplier   = 8
     ramp               = ['11000000', '10100000', '00000000', '00000000']
+    # ramp               = []
     # if basis = "fock", everything will be done in the fock basis
     # if basis = "energy" everything will be done in the energy basis (no fock approximation)
     # i.e. has to be "fock" for Harmonic Oscillator, but acts as a hyperparameter for a Transmon
@@ -60,6 +62,14 @@ def main():
     probability_amplitudes = probability_amplitudes / np.linalg.norm(probability_amplitudes)
         
     initial_state = Wavefunction(basis_to_coefs={basis : probability_amplitudes})
+    
+    # ---- Create Quantum States |0>, |1>, and the projector onto the computational subspace H_2 ----
+    zero_state = Wavefunction(basis_to_coefs={basis : np.array([1] + (n_proj - 1) * [0])})
+    one_state  = Wavefunction(basis_to_coefs={basis : np.array([0] + [1] + (n_proj - 2) * [0])})
+    
+    P_Q = Operator(
+        basis_to_matrix={basis: np.outer(to_ket(zero_state[basis]), to_bra(zero_state[basis])) + np.outer(to_ket(one_state[basis]), to_bra(one_state[basis]))}
+    )
     
     # ---- Instantiate the Driver ----
     sfq_driver = SFQDriver(
@@ -107,36 +117,38 @@ def main():
         N=N
     )
     
-    RY_TARGET = np.array([
-        [np.cos(theta_target / 2), -np.sin(theta_target / 2)],
-        [np.sin(theta_target / 2), np.cos(theta_target / 2)]
-    ])
-    RX_TARGET = np.array([
-        [np.cos(theta_target / 2), -1j * np.sin(theta_target / 2)],
-        [-1j * np.sin(theta_target / 2), np.cos(theta_target / 2)]
-    ])
-    H_TARGET = np.array([
-        [1.0, 1.0] / np.sqrt(2),
-        [1.0, -1.0] / np.sqrt(2)
-    ])
-    
-    TARGET = RY_TARGET
+    RY_TARGET = Operator(
+        basis_to_matrix={basis: np.array([
+                [np.cos(theta_target / 2), -np.sin(theta_target / 2)],
+                [np.sin(theta_target / 2), np.cos(theta_target / 2)]
+            ])}
+    )
 
     for i in range(1):
-        
+                
         system.state.reset_accumulated_unitary() 
         
         system.RY()
         U = system.state.get_accumulated_unitary()
+
+        U_Q_full = Operator(
+            basis_to_matrix={basis : P_Q[basis] @ U[basis] @ P_Q[basis]}
+        )
         
-        U_proj = U[basis][:2, :2]
+        U_Q = Operator(
+            basis_to_matrix={basis: U_Q_full[basis][:2, :2]}
+        )
         
-        leakage = get_leakage(U_proj=U_proj)
+        L1 = get_L1(U=U_Q, basis=basis)
+        
         # print(f"Leakage Metric: {leakage}")
-        process_fidelity = get_process_fidelity(U_proj=U_proj, U_target=TARGET)
+        process_fidelity = get_process_fidelity(U_Q=U_Q, U_target=RY_TARGET, basis=basis)
         # print(f"Process Fidelity: {process_fidelity}")
-        avg_gate_fidelity = get_average_gate_fidelity(process_fidelity=process_fidelity, leakage=leakage)
+        avg_gate_fidelity = get_average_gate_fidelity(process_fidelity=process_fidelity, L1=L1)
         # print(f"Average Gate Fidelity in the Absence of a Loss Channel: {avg_gate_fidelity}")
+        print(f"L1: {L1}")
+        r = np.linalg.norm(get_pauli_coefs(U=U_Q, basis=basis))
+        print(f"r: {r}")
         print(f"Fidelity: {avg_gate_fidelity}")
         
         probabilities = system.state.get_probabilities(basis)
