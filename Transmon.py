@@ -21,6 +21,7 @@ class Transmon(QuantumOscillator):
         )   
         
         self.annihilation, self.creation  = QuantumOscillator.create_ladder_operators(n_cut=n_cut)
+        # This is an approximation
         self.n["fock"] = 1j * self.r * (self.creation["fock"] - self.annihilation["fock"])
         
         # Kinetic energy operator
