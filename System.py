@@ -18,9 +18,9 @@ class System():
         
         self.T_q     = (2*np.pi) / qubit_angular_frequency # Qubit period [s]
         self.T_c     = self.T_q / self.M                   # Clock period [s]
-        
+                
         self.U_kick = Operator(
-            basis_to_matrix={"energy": expm(-1j * (theta / (2 * n_zpf)) * n["energy"])}
+            basis_to_matrix={"energy": expm(-1j * (theta / n_zpf) / 2 * n["energy"])}
         )
                 
         

@@ -19,21 +19,27 @@ def main():
     n_proj             = 201              # number of states to truncate to
     clock_multiplier   = 8
     ramp               = ['01000000', '11000000', '10000000', '00000000', '00000000']
+    # ramp = []
     
     # ---- Transmon Circuit Hyper-parameters ----
     EJ_EC = 69
     EC    = h * 250 * 1e6   # Charging energy [J]
-    theta = 0.03
+    THETA = 0.03
     
     # ---- Derived Physical Constants ----
-    EJ      = EJ_EC * EC                 # [J]
-    C_T      = e**2 / (2 * EC)
+    n_zpf = (1/2)*(EJ_EC / 2)**(1/4)
+    BETA  = THETA / (2 * n_zpf) # Fock approximation
+    EJ    = EJ_EC * EC                 # [J]
+    C_T   = e**2 / (2 * EC)
+    CC    = (BETA * hbar * C_T) / FLUX_QUANTUM
+    C     = C_T - CC
     
     # ---- Graph Representation of the Transmon Circuit ----
     transmon_graph_rep = {
         'nodes': ['a'],
         'capacitors': [
-            ('a', 'gnd', C_T),  # Shunt + Coupling Capacitance
+            ('a', 'gnd', C),  # Shunt capacitor
+            ('a', 'gnd', CC), # Coupling capacitor
         ],
         'inductors': [],
         'josephson_elements': [
@@ -59,9 +65,11 @@ def main():
         'external_flux': {}
     }
     
-    circuit = Circuit(graph_rep=LC_graph_rep)
+    circuit = Circuit(graph_rep=transmon_graph_rep)
     
     n, n_zpf, creation, annihilation, H0, energies, energy_states, alpha, f_q, omega_q = quantize(circuit=circuit, n_cut=n_cut)
+    
+    print(f"n['energy'][:3,:3]: {n["energy"][:3,:3]}")
     
     # ---- Create Quantum States |0>, |1>, and the projector onto the computational subspace H_2 ----
     zero_state = Wavefunction(basis_to_coefs={"energy" : np.array([1] + (n_proj - 1) * [0])})
@@ -99,12 +107,13 @@ def main():
     
     # Number of kicks in pulse train
     N = 47
+    # N = int(np.round(theta_target / theta))
     
     system = System(
         energy_states=energy_states,
         n=n,
         n_zpf=n_zpf,
-        theta=theta,
+        theta=THETA,
         H0=H0,
         qubit_angular_frequency=omega_q,
         clock_multiplier=clock_multiplier,
@@ -120,7 +129,7 @@ def main():
             ])}
     )
 
-    for i in range(100):
+    for i in range(1):
         system.state.reset_accumulated_unitary() 
         
         system.RY()
