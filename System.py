@@ -2,84 +2,85 @@ from __future__ import annotations
 import numpy as np
 from scipy.linalg import expm
 
-from QuantumOscillator import QuantumOscillator
 from Operator import Operator
 from Wavefunction import Wavefunction
 from constants import *
 
 class System():
-    def __init__(self, clock_multiplier: int, oscillator: QuantumOscillator, sfq_driver: SFQDriver, initial_state: Wavefunction, basis: str, N: int):
-        self.clock_multiplier = clock_multiplier
-        self.oscillator = oscillator
-        self.sfq_driver = sfq_driver
-        self.state      = initial_state
-        self.basis      = basis
-        self.N          = N
+    def __init__(self, energy_states: np.ndarray, n: Operator, n_zpf: float, theta: float, H0: Operator, qubit_angular_frequency: float, clock_multiplier: int, initial_state: Wavefunction, N: int, ramp: list[str]):
+        self.theta   = theta
+        self.H0      = H0
+        self.omega_q = qubit_angular_frequency
+        self.M       = clock_multiplier
+        self.state   = initial_state
+        self.N       = N
+        self.ramp    = ramp
         
-        self.T          = (2*np.pi) / oscillator.angular_frequency # Qubit period [s]
+        self.T_q     = (2*np.pi) / qubit_angular_frequency # Qubit period [s]
+        self.T_c     = self.T_q / self.M                   # Clock period [s]
         
-    @staticmethod
-    def free_evolve(state: Wavefunction, H0: Operator, T: float, duration: int, clock_multiplier: int, basis: str):
-        state.apply(operator=Operator({basis: expm(-1j * H0[basis] * (duration * T / clock_multiplier) / hbar)}))
+        self.U_kick = Operator(
+            basis_to_matrix={"energy": expm(-1j * (theta / (2 * n_zpf)) * n["energy"])}
+        )
+                
+        
+    def free_evolve(self, clock_cycles: int):
+        self.state.apply(
+            operator=Operator(
+                {"energy": expm(-1j * self.H0["energy"] * (clock_cycles * self.T_c) / hbar)}
+                )
+            )
 
     def RY(self):
         
         N = self.N
         
-        self.sfq_driver.on_ramp_evolve(self.state)
-        
+        self.on_ramp_evolve()
+                
         for _ in range(N):
-            self.sfq_driver.apply_pulse(self.state)
+            self.state.apply(self.U_kick)
             
-            System.free_evolve(
-                clock_multiplier=self.clock_multiplier,
-                state=self.state,
-                H0=self.oscillator.H0,
-                T=self.T,
-                duration=self.sfq_driver.clock_multiplier,
-                basis=self.basis
+            self.free_evolve(
+                clock_cycles=self.M,
             )
-            
-        self.sfq_driver.off_ramp_evolve(self.state)
-                        
-    def RX(self):        
         
-        N = self.N
+        self.off_ramp_evolve()
+            
+    def on_ramp_evolve(self):
+    
+        for sequence in self.ramp:
+            for action in sequence:
+                if action == "0":
+                    # free evolve for a single clock cycle
+                    self.free_evolve(clock_cycles=1)
+                else:
+                    # kick
+                    self.state.apply(self.U_kick)
+
+                    # free evolve for a single clock cycle
+                    self.free_evolve(clock_cycles=1)
+
+    def off_ramp_evolve(self):
+        flipped_ramps = [self.flip_X_ramp(r) for r in self.ramp][::-1]
         
-        self.sfq_driver.on_ramp_evolve(self.state)
-        
-        for _ in range(N):
-            
-            System.free_evolve(
-                clock_multiplier=self.clock_multiplier,
-                state=self.state,
-                H0=self.oscillator.H0,
-                T=self.T,
-                duration=4,
-                basis=self.basis
-            )
-            
-            self.sfq_driver.apply_pulse(self.state)
-            
-            System.free_evolve(
-                clock_multiplier=self.clock_multiplier,
-                state=self.state,
-                H0=self.oscillator.H0,
-                T=self.T,
-                duration=4,
-                basis=self.basis
-            )
-            
-        self.sfq_driver.off_ramp_evolve(self.state)
-            
-    def Hadamard(self):
-        # RY(pi/2) rotation
-        self.RY()
-        # RZ(pi) rotation
-        System.free_evolve(
-                state=self.state,
-                H0=self.oscillator.H0,
-                T=self.T,
-                duration=2,
-                basis=self.basis
-            )
+        for sequence in flipped_ramps:
+            for action in sequence:
+                if action == "0":
+                    # free evolve for a single clock cycle
+                    self.free_evolve(clock_cycles=1)
+                else:
+                    # kick
+                    self.state.apply(self.U_kick)
+
+                    # free evolve for a single clock cycle
+                    self.free_evolve(clock_cycles=1)
+
+    @staticmethod
+    def flip_X_ramp(ramp: str):
+        n = len(ramp)
+        flipped = ['0'] * n
+        for i in range(n):
+            if ramp[i] == '1':
+                new_pos = (n - i) % n
+                flipped[new_pos] = '1'
+        return ''.join(flipped)

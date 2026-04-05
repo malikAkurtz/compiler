@@ -3,83 +3,77 @@ from scipy.linalg import expm
 import matplotlib.pyplot as plt
 
 from System import System
-from Transmon import Transmon
-from HarmonicOscillator import HarmonicOscillator
-from SFQDriver import SFQDriver
 from Operator import Operator
 from Wavefunction import Wavefunction
 from utils import *
 from constants import *
 from fidelity import *
-from itertools import product
+from Circuit import Circuit
+from Quantize import quantize
 
 PLOT = True
-
 
 def main():
     # ---- Shared Hyper-parameters ----
     n_cut              = 201            # Number of charge states, -n_cut : n_cut
-    n_proj             = 7              # number of states to truncate to
-    theta              = 0.03           # U_kick angle
+    n_proj             = 201              # number of states to truncate to
     clock_multiplier   = 8
-    ramp               = ['11000000', '10100000', '00000000', '00000000']
-    # ramp               = []
-    # if basis = "fock", everything will be done in the fock basis
-    # if basis = "energy" everything will be done in the energy basis (no fock approximation)
-    # i.e. has to be "fock" for Harmonic Oscillator, but acts as a hyperparameter for a Transmon
-    basis              = "energy"
+    ramp               = ['01000000', '11000000', '10000000', '00000000', '00000000']
     
-    # ---- Hyper-parameters for Transmon ----
-    EC                 = h * 250 * 1e6   # Charging energy [J]
-    EJ_EC              = 69              # EJ/EC ratio
+    # ---- Transmon Circuit Hyper-parameters ----
+    EJ_EC = 69
+    EC    = h * 250 * 1e6   # Charging energy [J]
+    theta = 0.03
     
-    # ---- Hyper-parameters for Naive Harmonic Oscillator Qubit ----
+    # ---- Derived Physical Constants ----
+    EJ      = EJ_EC * EC                 # [J]
+    C_T      = e**2 / (2 * EC)
+    
+    # ---- Graph Representation of the Transmon Circuit ----
+    transmon_graph_rep = {
+        'nodes': ['a'],
+        'capacitors': [
+            ('a', 'gnd', C_T),  # Shunt + Coupling Capacitance
+        ],
+        'inductors': [],
+        'josephson_elements': [
+            ('a', 'gnd', EJ),
+        ],
+        'external_flux': {}
+    }
+    
+    # ---- Harmonic Oscillator LC Circuit Hyper-parameters ----
     C          = 100e-15 # [F]
     L          = 10e-9   # [H]
     
-    # Derived Physical Constants
-    spring_constant   = 1 / L
-    angular_frequency = np.sqrt(spring_constant / C) # [rad/s]
-        
-    # ---- Create the Oscillator ----
-    harmonic_oscillator = HarmonicOscillator(
-        mass=C,
-        angular_frequency=angular_frequency,
-        n_cut=n_cut
-    )
+    # ---- Graph Representation of the LC Circuit ----
+    LC_graph_rep = {
+        'nodes': ['a'],
+        'capacitors': [
+            ('a', 'gnd', C),  # Shunt + Coupling Capacitance
+        ],
+        'inductors': [
+            ('a', 'gnd', L)
+            ],
+        'josephson_elements': [],
+        'external_flux': {}
+    }
     
-    transmon = Transmon(
-        charging_energy=EC,
-        EJ_EC=EJ_EC,
-        n_cut=n_cut,
+    circuit = Circuit(graph_rep=LC_graph_rep)
+    
+    n, n_zpf, creation, annihilation, H0, energies, energy_states, alpha, f_q, omega_q = quantize(circuit=circuit, n_cut=n_cut)
+    
+    # ---- Create Quantum States |0>, |1>, and the projector onto the computational subspace H_2 ----
+    zero_state = Wavefunction(basis_to_coefs={"energy" : np.array([1] + (n_proj - 1) * [0])})
+    one_state  = Wavefunction(basis_to_coefs={"energy" : np.array([0] + [1] + (n_proj - 2) * [0])})
+    
+    P_Q = Operator(
+        basis_to_matrix={"energy": np.outer(to_ket(zero_state["energy"]), to_bra(zero_state["energy"])) + np.outer(to_ket(one_state["energy"]), to_bra(one_state["energy"]))}
     )
     
     # ---- Creating Our Initial Quantum State in Energy/Fock Basis, |0> ----
-    probability_amplitudes = (n_proj) * [0]
-    probability_amplitudes[0] = 1
-    
-    probability_amplitudes = np.array(probability_amplitudes)
-    probability_amplitudes = probability_amplitudes / np.linalg.norm(probability_amplitudes)
-        
-    initial_state = Wavefunction(basis_to_coefs={basis : probability_amplitudes})
-    
-    # ---- Create Quantum States |0>, |1>, and the projector onto the computational subspace H_2 ----
-    zero_state = Wavefunction(basis_to_coefs={basis : np.array([1] + (n_proj - 1) * [0])})
-    one_state  = Wavefunction(basis_to_coefs={basis : np.array([0] + [1] + (n_proj - 2) * [0])})
-    
-    P_Q = Operator(
-        basis_to_matrix={basis: np.outer(to_ket(zero_state[basis]), to_bra(zero_state[basis])) + np.outer(to_ket(one_state[basis]), to_bra(one_state[basis]))}
-    )
-    
-    # ---- Instantiate the Driver ----
-    sfq_driver = SFQDriver(
-        clock_multiplier=clock_multiplier,
-        theta=theta,
-        oscillator=transmon,
-        basis=basis,
-        ramp=ramp,
-    )
-    
+    initial_state = Wavefunction(basis_to_coefs={"energy" : zero_state["energy"].copy()})
+
     populations = [[] for i in range(n_cut)] # to store measurement probabilities
     
     if PLOT:
@@ -99,9 +93,7 @@ def main():
 
         # Store Bloch vector history for trail
         bx_hist, by_hist, bz_hist = [], [], []
-        
-    # ---- Instantiate System Object ----
-    
+            
     # Target Unitary rotation
     theta_target = np.pi/2
     
@@ -109,56 +101,59 @@ def main():
     N = 47
     
     system = System(
+        energy_states=energy_states,
+        n=n,
+        n_zpf=n_zpf,
+        theta=theta,
+        H0=H0,
+        qubit_angular_frequency=omega_q,
         clock_multiplier=clock_multiplier,
-        oscillator=transmon,
-        sfq_driver=sfq_driver,
         initial_state=initial_state,
-        basis=basis,
-        N=N
+        N=N,
+        ramp=ramp
     )
     
     RY_TARGET = Operator(
-        basis_to_matrix={basis: np.array([
+        basis_to_matrix={"energy": np.array([
                 [np.cos(theta_target / 2), -np.sin(theta_target / 2)],
                 [np.sin(theta_target / 2), np.cos(theta_target / 2)]
             ])}
     )
 
-    for i in range(1):
-                
+    for i in range(100):
         system.state.reset_accumulated_unitary() 
         
         system.RY()
         U = system.state.get_accumulated_unitary()
 
         U_Q_full = Operator(
-            basis_to_matrix={basis : P_Q[basis] @ U[basis] @ P_Q[basis]}
+            basis_to_matrix={"energy" : P_Q["energy"] @ U["energy"] @ P_Q["energy"]}
         )
         
         U_Q = Operator(
-            basis_to_matrix={basis: U_Q_full[basis][:2, :2]}
+            basis_to_matrix={"energy": U_Q_full["energy"][:2, :2]}
         )
         
-        L1 = get_L1(U=U_Q, basis=basis)
+        L1 = get_L1(U=U_Q, basis="energy")
         
         # print(f"Leakage Metric: {leakage}")
-        process_fidelity = get_process_fidelity(U_Q=U_Q, U_target=RY_TARGET, basis=basis)
+        process_fidelity = get_process_fidelity(U_Q=U_Q, U_target=RY_TARGET, basis="energy")
         # print(f"Process Fidelity: {process_fidelity}")
         avg_gate_fidelity = get_average_gate_fidelity(process_fidelity=process_fidelity, L1=L1)
         # print(f"Average Gate Fidelity in the Absence of a Loss Channel: {avg_gate_fidelity}")
         print(f"L1: {L1}")
-        r = np.linalg.norm(get_pauli_coefs(U=U_Q, basis=basis))
+        r = np.linalg.norm(get_pauli_coefs(U=U_Q, basis="energy"))
         print(f"r: {r}")
         print(f"Fidelity: {avg_gate_fidelity}")
         
-        probabilities = system.state.get_probabilities(basis)
+        probabilities = system.state.get_probabilities("energy")
         
         for idx, p in enumerate(probabilities):
             populations[idx].append(p)
         
         if PLOT:
-            state_azimuth, state_inclination = get_spherical_coords(alpha=system.state[basis][0],
-                                                                    beta=system.state[basis][1])
+            state_azimuth, state_inclination = get_spherical_coords(alpha=system.state["energy"][0],
+                                                                    beta=system.state["energy"][1])
             bx, by, bz = get_rectangular_coords(azimuth=state_azimuth, inclination=state_inclination)
             
             bx_hist.append(bx)
@@ -254,7 +249,7 @@ def main():
             fig.canvas.flush_events()
 
         print(f"Final State: ")
-        print(system.state[basis][:3])
+        print(system.state["energy"][:3])
     
     if PLOT:
         plt.ioff()

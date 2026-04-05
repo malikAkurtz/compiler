@@ -32,9 +32,7 @@ class Wavefunction():
     def get_probabilities(self, basis: str):
         return np.abs(self.basis_to_coefs[basis])**2
             
-    def apply(self, operator: Operator):
-        new_basis_to_coefs = {}
-        
+    def apply(self, operator: Operator):        
         # Apply the operator to each basis representation of the wavefunction
         for basis, coefs in self.basis_to_coefs.items():
             n_proj = len(coefs)
