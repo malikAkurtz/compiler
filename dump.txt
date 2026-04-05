@@ -1,0 +1,1340 @@
+================ Circuit.py ================
+###############################################################################
+#
+#   Circuit.py
+#
+#   Builds a circuit graph from a user-defined topology and constructs the
+#   capacitance and inductance matrices.
+#
+###############################################################################
+
+import numpy as np
+from Elements import *
+
+###############################################################################
+#
+#   Circuit Class
+#
+###############################################################################
+
+class Circuit:
+    """
+    Represents a superconducting circuit as a graph.
+    Responsibilities: graph construction, capacitance/inductance matrices,
+    and classical energy functions.
+    """
+
+    # =====================================================================
+    #   Constructor
+    # =====================================================================
+
+    def __init__(self, graph_rep: dict):
+        self.labels                                           = graph_rep["nodes"]
+        self.circuit_graph                                    = Circuit._build_master_graph(graph_rep)
+        self.capacitive_sub_graph, self.inductive_sub_graph   = self._build_sub_graphs()
+        self.josephson_elements                               = [e for e in self.inductive_sub_graph.edges if isinstance(e, JosephsonElement)]
+        self.active_nodes, self.passive_nodes                 = self._partition_nodes()
+        self.N                                                = len(self.active_nodes)
+        self.P                                                = len(self.active_nodes) + len(self.passive_nodes) + 1 # + 1 for ground
+        self.capacitance_matrix, self.inv_inductance_matrix   = self._build_matrices()
+        self.inv_capacitance_matrix                           = np.linalg.inv(self.capacitance_matrix)
+        self.offset_dict                                      = graph_rep["external_flux"]
+        self.omega_squared                                    = self._build_omega_squared()
+        self.normal_modes_squared, self.normal_vecs_squared   = np.linalg.eig(self.omega_squared)
+
+    # =====================================================================
+    #   Graph Construction
+    # =====================================================================
+
+    @staticmethod
+    def _build_master_graph(graph_rep: dict) -> Graph:
+        """
+        Build the full circuit graph from the user-supplied dictionary.
+        Also breaks symmetry by adding a tiny capacitor to ground for
+        any node that lacks a capacitive branch.
+        """
+        gnd = Node(label="gnd", branches=None)
+        label_to_node = {"gnd": gnd}
+        branches = []
+
+        # Create the node objects from the circuit dictionary
+        for label in graph_rep["nodes"]: # gnd not included
+            label_to_node[label] = Node(label=label, branches=None)
+
+        # Create the capacitor objects from the circuit dictionary
+        # and add it to the appropriate nodes
+        for (node1_label, node2_label, capacitance) in graph_rep['capacitors']:
+            node1 = label_to_node[node1_label]
+            node2 = label_to_node[node2_label]
+            
+            capacitor = Capacitor(capacitance=capacitance, nodes=(node1, node2))
+            
+            branches.append(capacitor)
+            node1.branches.append(capacitor)
+            node2.branches.append(capacitor)
+            
+        # Create the linear inductor objects from the circuit dictionary
+        # and add it to the appropriate nodes
+        for (node1_label, node2_label, inductance) in graph_rep['inductors']:
+            node1 = label_to_node[node1_label]
+            node2 = label_to_node[node2_label]
+            
+            inductor = Inductor(inductance=inductance, nodes=(node1, node2))
+            
+            branches.append(inductor)
+            node1.branches.append(inductor)
+            node2.branches.append(inductor)
+
+        # Create the Josephson element objects from the circuit dictionary
+        # and add it to the appropriate nodes
+        for (node1_label, node2_label, josephson_energy) in graph_rep['josephson_elements']:
+            node1 = label_to_node[node1_label]
+            node2 = label_to_node[node2_label]
+            
+            josephson_element = JosephsonElement(josephson_energy=josephson_energy, nodes=(node1, node2))
+            
+            branches.append(josephson_element)
+            node1.branches.append(josephson_element)
+            node2.branches.append(josephson_element)
+
+        # Break symmetry: add tiny parasitic capacitor to ground for nodes with no
+        # capacitive branch (prevents singular capacitance matrix)
+        for node in label_to_node.values():
+            if node.label == "gnd":
+                continue
+            has_capacitor = any(isinstance(b, CapacitiveElement) for b in node.branches)
+            if not has_capacitor:
+                capacitor = Capacitor(capacitance=1e-20, nodes=(node, gnd))
+                
+                branches.append(capacitor)
+                node.branches.append(capacitor)
+                gnd.branches.append(capacitor)
+
+        return Graph(list(label_to_node.values()), branches)
+
+    # =====================================================================
+    #   Sub-Graph Construction
+    # =====================================================================
+
+    def _build_sub_graphs(self):
+        """Split master graph into capacitive and inductive sub-graphs."""
+        nodes    = self.circuit_graph.vertices
+        branches = self.circuit_graph.edges
+        # Capacitors
+        capacitive_branches = [b for b in branches if isinstance(b, CapacitiveElement)]
+        # Inductors and Josephson elements
+        inductive_branches = [b for b in branches if isinstance(b, InductiveElement)]
+        
+        return Graph(nodes, capacitive_branches), Graph(nodes, inductive_branches)
+
+    # =====================================================================
+    #   Node Partitioning
+    # =====================================================================
+
+    def _partition_nodes(self):
+        """Classify nodes as active (connected to inductor/JJ) or passive."""
+        active, passive = [], []
+        
+        for node in self.circuit_graph.vertices:
+            if node.label == "gnd":
+                continue
+            
+            _, inductive_degree = node._get_degree()
+            
+            # Active
+            if inductive_degree > 0:
+                active.append(node)
+            # Passive
+            else:
+                passive.append(node)
+                
+        return active, passive
+
+    # =====================================================================
+    #   Matrix Construction
+    # =====================================================================
+
+    def _build_matrices(self):
+        """
+        Build the reduced (ground row/column removed) capacitance and
+        inverse-inductance matrices using the graph-Laplacian approach.
+        """
+        capacitance_matrix        = np.zeros((self.P, self.P))
+        inverse_inductance_matrix = np.zeros((self.P, self.P))
+
+        for branch in self.circuit_graph.edges:
+            node1_label = branch.nodes[0].label
+            node2_label = branch.nodes[1].label
+            i = 0 if node1_label == "gnd" else self.labels.index(node1_label) + 1 # + 1 to account for gnd being absent in labels
+            j = 0 if node2_label == "gnd" else self.labels.index(node2_label) + 1
+
+            if isinstance(branch, Capacitor):
+                capacitance_matrix[i][j] -= branch.C
+                capacitance_matrix[j][i] -= branch.C
+            elif isinstance(branch, Inductor):
+                inverse_inductance_matrix[i][j] -= 1 / branch.L
+                inverse_inductance_matrix[j][i] -= 1 / branch.L
+
+        for i in range(self.P):
+            capacitance_matrix[i][i]        = -np.sum(capacitance_matrix[i])
+            inverse_inductance_matrix[j][j] = -np.sum(inverse_inductance_matrix[j])
+
+        # Remove the row/col corresponding to gnd node
+        capacitance_matrix = np.delete(np.delete(capacitance_matrix, 0, axis=0), 0, axis=1)
+        inverse_inductance_matrix = np.delete(np.delete(inverse_inductance_matrix, 0, axis=0), 0, axis=1)
+        
+        return capacitance_matrix, inverse_inductance_matrix
+
+    # =====================================================================
+    #   Classical Mechanics Helpers
+    # =====================================================================
+
+    def _get_node_flux_dot(self, node_charge):
+        return self.inv_capacitance_matrix @ node_charge
+
+    def get_kinetic_energy(self, node_charge):
+        node_flux_dot = self._get_node_flux_dot(node_charge)
+        return (node_flux_dot.T @ self.capacitance_matrix @ node_flux_dot) / 2
+
+    def get_potential_energy(self, node_flux: np.ndarray):
+        """Total potential energy = linear (inductive) + nonlinear (Josephson)."""
+        # Linear inductive term
+        if self.inv_inductance_matrix.size > 0 and np.any(self.inv_inductance_matrix != 0):
+            linear_term = (node_flux.T @ self.inv_inductance_matrix @ node_flux) / 2
+        else:
+            linear_term = 0
+
+        # External flux correction
+        ext_term = 0
+        for (n1_label, n2_label), offset in self.offset_dict.items():
+            j = self.labels.index(n1_label)
+            k = self.labels.index(n2_label)
+            inductance = -1 / self.inv_inductance_matrix[j][k]
+            ext_term += ((node_flux[j] - node_flux[k]) * offset) / inductance
+
+        # Josephson (nonlinear) term
+        jj_term = 0
+        for jj in self.josephson_elements:
+            n1_label = jj.nodes[0].label
+            n2_label = jj.nodes[1].label
+            phi1 = node_flux[self.labels.index(n1_label)] if n1_label != "gnd" else 0
+            phi2 = node_flux[self.labels.index(n2_label)] if n2_label != "gnd" else 0
+            jj_term += -jj.EJ * np.cos((phi1 - phi2) / PHI_0)
+
+        return linear_term + ext_term + jj_term
+
+    def get_hamiltonian(self, node_flux, node_charge):
+        return 0.5 * (node_charge.T @ self.inv_capacitance_matrix @ node_charge) + self.get_potential_energy(node_flux)
+
+    def get_lagrangian(self, node_flux, node_charge):
+        return self.get_kinetic_energy(node_charge) - self.get_potential_energy(node_flux)
+
+    # =====================================================================
+    #   Normal Mode Analysis
+    # =====================================================================
+
+    def _build_omega_squared(self):
+        if np.any(self.inv_inductance_matrix != 0):
+            return self.inv_capacitance_matrix @ self.inv_inductance_matrix
+        return np.zeros((self.N, self.N))
+
+    # =====================================================================
+    #   Connectivity Display
+    # =====================================================================
+
+    def connectivity(self):
+        s = "--- Circuit Connectivity ---\n"
+        for node in self.circuit_graph.vertices:
+            s += f"Node '{node.label}':\n"
+            for branch in node.branches:
+                other = [n for n in branch.nodes if n != node]
+                conn = f"connected to {other[0].label}" if other else "grounded"
+                if isinstance(branch, Capacitor):
+                    s += f"  - Capacitor ({branch.C:.2e}) {conn}\n"
+                elif isinstance(branch, Inductor):
+                    s += f"  - Inductor ({branch.L:.2e}) {conn}\n"
+                else:
+                    s += f"  - Josephson Element ({branch.EJ:.2e}) {conn}\n"
+        return s
+
+    def __repr__(self):
+        return self.connectivity()
+
+
+================ constants.py ================
+from scipy.constants import h, hbar, e
+
+# Reduced Flux Quantum
+PHI_0 = hbar / (2 * e)    # reduced flux quantum, for dimensionless phase
+FLUX_QUANTUM = h / (2 * e) # physical flux quantum, for SFQ kick angle
+
+
+================ Elements.py ================
+from __future__ import annotations
+from typing import Optional
+import numpy as np
+from constants import PHI_0
+
+######################################## NODE CLASS ########################################
+class Node:
+    def __init__(self, label: str, branches: Optional[list[Branch]] = None):
+        # e.g. "a", "b", etc.
+        self.label = label
+        # e.g [capacitor1, inductor1, JJ1, ...]
+        self.branches = branches if branches is not None else []
+
+    def _get_degree(self):
+        # number of connected capacitive branches
+        capacitive_degree = 0
+        # number of connected inductive branches
+        inductive_degree = 0
+        
+        for branch in self.branches:
+            if isinstance(branch, CapacitiveElement):
+                capacitive_degree += 1
+            if isinstance(branch, InductiveElement):
+                inductive_degree += 1
+                
+        return capacitive_degree, inductive_degree    
+######################################## NODE CLASS ######################################## 
+
+######################################## BRANCH CLASS ########################################
+# A BRANCH IS AN ELEMENT, TWO NODES CAN BE CONNECTED BY MULTIPLE BRANCHES
+class Branch:
+    def __init__(self, nodes: Optional[tuple[Node]] = None):
+        self.nodes = nodes
+        
+    def calculate_energy(self):
+        pass
+######################################## BRANCH CLASS ########################################
+
+######################################## CAPACITIVE ELEMENT CLASS ########################################
+class CapacitiveElement(Branch):
+    def __init__(self, capacitance: float, nodes: Optional[tuple[Node]] = None):
+        super().__init__(nodes)
+        self.C = capacitance
+        
+    def calculate_energy(self, branch_charge: float, branch_charge_offset: float):
+        return ((branch_charge - branch_charge_offset)**2) / (2 * self.C)
+######################################## CAPACITIVE ELEMENT CLASS ########################################
+        
+######################################## CAPACITOR  CLASS ########################################
+class Capacitor(CapacitiveElement):
+    def __init__(self, capacitance: float, nodes: Optional[tuple[Node]] = None):
+        super().__init__(capacitance, nodes)
+######################################## CAPACITOR ELEMENT CLASS ########################################
+
+######################################## INDUCTIVE ELEMENT CLASS ########################################
+class InductiveElement(Branch):
+    def __init__(self, nodes: Optional[tuple[Node]] = None):
+        super().__init__(nodes)
+        
+    def calculate_energy(self):
+        pass
+######################################## INDUCTIVE ELEMENT CLASS ########################################
+
+######################################## INDUCTOR CLASS ########################################
+class Inductor(InductiveElement):
+    def __init__(self, inductance: float, nodes: Optional[tuple[Node]] = None):
+        super().__init__(nodes)
+        self.L = inductance
+        
+    def calculate_energy(self, branch_flux: float, branch_flux_offset: float):
+        return ((branch_flux - branch_flux_offset)**2) / (2 * self.L)
+######################################## INDUCTOR CLASS ########################################
+
+######################################## JOSEPHSON ELEMENT CLASS ########################################
+class JosephsonElement(InductiveElement):
+    def __init__(self, josephson_energy: float, nodes: Optional[tuple[Node]] = None):
+        super().__init__(nodes)
+        self.EJ = josephson_energy
+        
+    def calculate_energy(self, branch_flux: float, branch_flux_offset: float):
+        return -self.EJ * np.cos( (branch_flux - branch_flux_offset) / PHI_0)
+######################################## JOSEPHSON ELEMENT CLASS ########################################
+
+######################################## GRAPH CLASS ########################################
+class Graph:
+    def __init__(self, vertices: list[Node], edges: list[Branch]):
+        self.vertices = vertices
+        self.edges = edges
+######################################## GRAPH CLASS ########################################
+
+
+================ fidelity.py ================
+import numpy as np
+from Operator import Operator
+from utils import get_pauli_coefs
+
+def get_L1(U: np.ndarray, basis):
+        return 1 - np.sum(np.abs(get_pauli_coefs(U, basis=basis))**2)
+
+def get_r(coefs: np.ndarray):
+    return np.linalg.norm(coefs)
+
+def get_delta(r: float):
+    return 1 - r
+
+def get_process_fidelity(U_Q: Operator, U_target: Operator, basis: str):
+    return np.abs( np.trace(U_target[basis].conjugate().T @ U_Q[basis]) )**2 / 4
+
+def get_average_gate_fidelity(process_fidelity: float, L1: float):
+    fidelity = ( (2 * process_fidelity) + 1 - L1 ) / 3
+    return fidelity.real
+
+
+================ Operator.py ================
+import numpy as np
+from typing import Optional
+
+from PauliMatrices import PAULI_MATRICES
+
+class Operator():
+    """
+    An Operator is a matrix in a chosen basis
+    """
+    
+    def __init__(self, basis_to_matrix: dict):
+        self.basis_to_matrix = basis_to_matrix
+    
+    def get_projection(self, basis: str):
+        return self.basis_to_matrix[basis]
+    
+    def __getitem__(self, key):
+        return self.get_projection(basis=key)
+
+    def set_projection(self, basis: str, matrix: np.ndarray):
+        self.basis_to_matrix[basis] = matrix
+        
+    def __setitem__(self, key, value):
+        self.set_projection(basis=key, matrix=value)
+    
+    def __delitem__(self, key):
+        del self.basis_to_matrix[key]
+
+
+================ PauliMatrices.py ================
+import numpy as np
+
+I = np.eye(2)
+
+X = np.array([
+    [0, 1],
+    [1, 0]
+])
+
+Y = np.array([
+    [0, -1j],
+    [1j, 0]
+])
+
+Z = np.array([
+    [1, 0],
+    [0, -1]
+])
+
+PAULI_MATRICES = [I, X, Y, Z]
+
+
+================ playground.py ================
+import numpy as np
+# np.set_printoptions(precision=2, suppress=True)
+
+from scipy.linalg import expm
+import matplotlib.pyplot as plt
+
+from System import System
+from HarmonicOscillator import HarmonicOscillator
+from SFQDriver import SFQDriver
+from Wavefunction import Wavefunction
+from utils import *
+from constants import *
+from fidelity import *
+from itertools import combinations
+
+def main():
+    A = np.array([
+        [0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0], # obj
+        [-1, -1, 0, 0, 0, 1, 0, 0, 0, 0, 0], # s1
+        [1, 0, -1, -1, 0, 0, 1, 0, 0, 0, 0], # s2
+        [0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 3], # w
+        [0, 1, 1, 0, -1, 0, 0, 0, 1, 0, 3], # a1
+        [0, 0, 0, 1, 1, 0, 0, 0, 0, 1, 5] # a2
+    ])
+    print("Initial Tableu: ")
+    print(A)
+    
+    A[3] = A[3] + (-1 * A[2])
+
+    A[0] = A[0] - A[4]
+    A[0] = A[0] - A[5]
+    
+    print("After initial preparation: ")
+    print(A)
+    
+    A[0] = A[0] + A[4]
+    A[1] = A[1] + A[4]
+    
+    print("After first pivot: ")
+    print(A)
+    
+    A[2] = A[2] + A[3]
+    A[0] = A[0] + A[3]
+    A[5] = A[5] - A[3]
+    
+    print("After second pivot: ")
+    print(A)
+    
+    A[0] = A[0] + A[5]
+    A[1] = A[1] + A[5]
+    A[3] = A[3] + A[5]
+    
+    print("After third pivot: ")
+    print(A)
+    
+    print("Done Phase 1")
+    
+    A = np.delete(A, 8, axis=1)  # remove a1 column
+    A = np.delete(A, 8, axis=1)  # remove a2 column (now shifted)
+    
+    A[0] = np.array([3, 5, 1, 1, -2, 2, 4, 0, 0])
+    
+    print("After getting rid of artifical obj row and cols: ")
+    print(A)
+    
+    A[0] = A[0] + (-3 * A[5])
+    A[0] = A[0] + (-5 * A[4])
+    A[0] = A[0] + (-1 * A[3])
+    A[0] = A[0] + (-2 * A[1])
+    A[0] = A[0] + (-4 * A[2])
+    
+    print("After zeroing obj row corresponding to basic vars: ")
+    print(A)
+    
+    A[5] = A[5] + A[4]
+    A[0] = A[0] + A[4]
+    
+    print("After first pivot: ")
+    print(A)
+    
+    A[0] = A[0] + (2*A[3])
+    A[4] = A[4] + (A[3])
+    
+    print("After second pivot: ")
+    print(A)
+    
+    # A = np.insert(A, 0, np.array([3, 5, 1, 1, -2, 2, 4, 0]), axis=0)
+    
+if __name__=="__main__":
+    
+    main()
+
+
+================ Quantize.py ================
+###############################################################################
+#
+#   quantization.py
+#
+#   Builds the quantum Hamiltonian in the charge or Fock basis, diagonalizes
+#   it, and transforms operators into the energy eigenbasis.
+#
+###############################################################################
+
+
+import numpy as np
+from constants import *
+from Circuit import Circuit
+from Operator import Operator
+from QuantumOscillator import QuantumOscillator
+from utils import create_upper_lower
+
+def quantize(circuit: Circuit, n_cut: int):
+    """
+    1) Builds charge operator                     (charge basis + Fock basis)
+    2) Builds creation and annihilation operators (Fock basis)
+    3) Builds kinetic energy operator             (charge basis)
+    4) Builds potential energy operator           (charge basis)
+    5) Builds unperturbed Hamiltonian operator    (charge basis + Fock basis)
+    6) Diagonalizes unperturbed Hamiltonian       (charge basis)
+    7) Calculate anharmonicity, qubit frequency, 
+        and qubit angular frequency
+
+    Parameters
+    ----------
+    circuit : Circuit
+        A fully constructed Circuit object.
+    n_cut : int
+        Hilbert-space truncation: Cooper-pair numbers run from -n_cut to +n_cut
+        (charge basis), or Fock states 0..n_cut-1 (Fock basis).
+
+    Returns
+    -------
+    QuantizationResult
+    """
+    coupling_matrix = e**2 / (2 * circuit.capacitance_matrix)
+    
+    annihilation, creation  = QuantumOscillator.create_ladder_operators(n_cut=n_cut)
+    
+    if len(circuit.josephson_elements) > 0:
+        EJ    = np.array([josephson_element.EJ for josephson_element in circuit.josephson_elements])
+        EJ_EC = EJ / coupling_matrix
+        
+        # Charge operator
+        n = Operator(
+            basis_to_matrix={"charge" : np.diag([n for n in range(int(-(n_cut-1)/2), int((n_cut-1)/2) + 1)])}
+        )    
+        
+        n_zpf = (1/2)*(EJ_EC / 2)**(1/4)
+    
+        # Kinetic energy operator
+        T = Operator(
+            basis_to_matrix={"charge" : 4*EC*(n["charge"]**2)}
+        ) 
+    
+        # Potential energy operator
+        V = Operator(
+            basis_to_matrix={"charge" : create_upper_lower(value=-EJ / 2, dim=n_cut)}
+        ) 
+    
+        # Unperturbed Hamiltonian operator
+        H0 = Operator(
+            basis_to_matrix={"charge" : T["charge"] + V["charge"]}
+            ) 
+    
+        # Diagonalize the Hamiltonian in the charge basis to get energy eigenvalues/eigenvectors
+        energies, energy_states = np.linalg.eigh(H0["charge"])
+        energy_states = energy_states.astype(complex)
+    
+        # Unperturbed Hamiltonian operator in the energy basis
+        H0["energy"] = np.diag(energies)
+
+        anharmonicity           = (energies[2] - energies[1]) - (energies[1] - energies[0])
+        qubit_frequency         = (energies[1] - energies[0]) / h 
+        qubit_angular_frequency = qubit_frequency * (2*np.pi)
+    
+        # NOTE: I need to understand this better, Claude gave me this fix and I don't know why it works
+        # Fix eigenvector phases so that <psi_i|n|psi_{i+1}> is negative imaginary
+        for i in range(len(energies) - 1):
+            element = energy_states[:, i].conj() @ n["charge"] @ energy_states[:, i + 1]
+            if np.abs(element) > 1e-12:
+                phase = -1j * element / np.abs(element)
+                energy_states[:, i + 1] = phase * energy_states[:, i + 1]
+            
+        # Get n in the energy basis
+        n["energy"] = energy_states.conj().T @ n["charge"] @ energy_states
+        
+    else:
+        qubit_angular_frequency = np.sqrt(circuit.omega_squared[0][0])
+        
+        # Number operator
+        N = Operator(
+            basis_to_matrix={"fock" : creation["fock"] @ annihilation["fock"]}
+        )
+        
+        n_zpf = (1 / (2*e)) * np.sqrt(hbar * qubit_angular_frequency * C_T / 2)
+        
+        # Charge operator
+        n = Operator(
+            basis_to_matrix={"fock" : 1j * n_zpf * (creation["fock"] - annihilation["fock"])}
+        )
+        
+        # Unperturbed Hamiltonian operator
+        H0 = Operator(
+            basis_to_matrix={"fock": hbar*qubit_angular_frequency*(N["fock"]+(0.5*np.eye(n_cut)))}
+        )
+        
+        # Diagonalize the Hamiltonian in the fock basis to get energy eigenvalues/eigenvectors
+        energies, energy_states = np.linalg.eigh(H0["fock"])
+        energy_states = energy_states.astype(complex)
+        
+        # Unperturbed Hamiltonian operator in the energy basis (same as in fock basis)
+        H0["energy"] = np.diag(energies)
+        
+        anharmonicity           = (energies[2] - energies[1]) - (energies[1] - energies[0])
+        qubit_frequency         = (energies[1] - energies[0]) / h 
+        qubit_angular_frequency = qubit_frequency * (2*np.pi)
+        
+        # Get n in the energy basis (same as in fock basis)
+        n["energy"] = energy_states.conj().T @ n["fock"] @ energy_states
+
+    return n, n_zpf, creation, annihilation, H0, energies, energy_states, anharmonicity, qubit_frequency, qubit_angular_frequency
+
+
+
+================ QuantumOscillator.py ================
+import numpy as np
+
+from Operator import Operator
+
+class QuantumOscillator():
+    
+    def __init__(self):
+        pass
+    
+    @staticmethod
+    def create_ladder_operators(n_cut: int):
+        fock_annihilation_matrix = np.zeros((n_cut, n_cut))
+        
+        for m in range(n_cut):
+            for n in range(n_cut):
+                if m == (n-1):
+                    fock_annihilation_matrix[m][n] = np.sqrt(n)
+                    
+        annihilation = Operator(
+                        basis_to_matrix={"fock" : fock_annihilation_matrix}
+                        )
+                    
+        creation = Operator(
+                        basis_to_matrix={"fock" : fock_annihilation_matrix.conj().T}
+                        )
+                    
+        return annihilation, creation
+
+
+================ qubit_search.py ================
+import numpy as np
+from scipy.linalg import expm
+import matplotlib.pyplot as plt
+
+from System import System
+from Wavefunction import Wavefunction
+from utils import *
+from constants import *
+from fidelity import *
+from itertools import product
+from Circuit import Circuit
+from Quantize import quantize
+
+def main():
+    # ---- Shared Hyper-parameters ----
+    n_cut              = 201            # Number of charge states, -n_cut : n_cut
+    n_proj             = 7              # number of states to truncate to
+    clock_multiplier   = 8
+    ramp_options       = ["00000000", "10000000", "01000000", "00100000","11000000", "10100000", "01100000", "11100000"]
+
+    
+    # ---- Transmon Circuit Hyper-parameters ----
+    EJ_EC = 69
+    EC    = h * 250 * 1e6   # Charging energy [J]
+    theta = 0.03
+    
+    # ---- Derived Physical Constants ----
+    EJ      = EJ_EC * EC                 # [J]
+    C_T      = e**2 / (2 * EC)
+    
+    # ---- Graph Representation of the Circuit ----
+    graph_rep = {
+        'nodes': ['a'],
+        'capacitors': [
+            ('a', 'gnd', C_T),  # Shunt + Coupling Capacitance
+        ],
+        'inductors': [],
+        'josephson_elements': [
+            ('a', 'gnd', EJ),
+        ],
+        'external_flux': {}
+    }
+    
+    circuit = Circuit(graph_rep=graph_rep)
+    
+    n, n_zpf, creation, annihilation, H0, energies, energy_states, alpha, f_q, omega_q = quantize(circuit=circuit, n_cut=n_cut)
+    
+    print(f"n['energy'][:3, :3]")
+    print(n["energy"][:3, :3])
+    
+    # ---- Create Quantum States |0>, |1>, and the projector onto the computational subspace H_2 ----
+    zero_state = Wavefunction(basis_to_coefs={"energy" : np.array([1] + (n_proj - 1) * [0])})
+    one_state  = Wavefunction(basis_to_coefs={"energy" : np.array([0] + [1] + (n_proj - 2) * [0])})
+    
+    P_Q = Operator(
+        basis_to_matrix={"energy": np.outer(to_ket(zero_state["energy"]), to_bra(zero_state["energy"])) + np.outer(to_ket(one_state["energy"]), to_bra(one_state["energy"]))}
+    )
+    
+    # Search over ramps
+    best_fidelity = 0
+    best_ramp = None
+    best_N = None
+    
+    theta_target = np.pi/2
+    
+    N_base = int(np.round(theta_target / theta))
+
+    for N in range(N_base - 5, N_base + 5):
+        if best_fidelity >= 0.9999:
+            break
+        if N < 0:
+            continue
+        for ramp_length in range(1, 6):
+            if best_fidelity >= 0.9999:
+                break
+            for ramp in product(ramp_options, repeat=ramp_length):
+                if best_fidelity >= 0.9999:
+                    break
+                ramp = list(ramp)
+                
+                # ---- Creating Our Initial Quantum State in Energy/Fock Basis, |0> ----
+                initial_state = Wavefunction(basis_to_coefs={"energy" : zero_state["energy"].copy()})
+                    
+                # ---- Instantiate System Object ----
+                system = System(
+                    energy_states=energy_states,
+                    n=n,
+                    n_zpf=n_zpf,
+                    theta=theta,
+                    H0=H0,
+                    qubit_angular_frequency=omega_q,
+                    clock_multiplier=clock_multiplier,
+                    initial_state=initial_state,
+                    N=N,
+                    ramp=ramp
+                )
+                
+                RY_TARGET = Operator(
+                    basis_to_matrix={"energy": np.array([
+                            [np.cos(theta_target / 2), -np.sin(theta_target / 2)],
+                            [np.sin(theta_target / 2), np.cos(theta_target / 2)]
+                        ])}
+                )
+                                    
+                system.RY()
+                U = system.state.get_accumulated_unitary()
+                
+                U_Q_full = Operator(
+                    basis_to_matrix={"energy" : P_Q["energy"] @ U["energy"] @ P_Q["energy"]}
+                )                 
+                
+                U_Q = Operator(
+                    basis_to_matrix={"energy": U_Q_full["energy"][:2, :2]}
+                )
+                
+                L1 = get_L1(U=U_Q, basis="energy")
+                
+                process_fidelity = get_process_fidelity(U_Q=U_Q, U_target=RY_TARGET, basis="energy")
+                avg_gate_fidelity = get_average_gate_fidelity(process_fidelity=process_fidelity, L1=L1)
+                
+                if avg_gate_fidelity > best_fidelity:
+                    best_fidelity = avg_gate_fidelity
+                    best_ramp = ramp
+                    best_N = N
+                    print(f"New Best Fidelity: {avg_gate_fidelity}")
+                    print(f"N: {N}, Ramp: {ramp}")
+                    
+    
+    print(f"Best Ramp: {best_ramp}")
+    print(f"Best N: {best_N}")
+    print(f"Fidelity: {best_fidelity}")
+    
+if __name__=="__main__":
+    main()
+
+
+================ qubit.py ================
+import numpy as np
+from scipy.linalg import expm
+from scipy.linalg import ishermitian
+import matplotlib.pyplot as plt
+
+from System import System
+from Operator import Operator
+from Wavefunction import Wavefunction
+from utils import *
+from constants import *
+from fidelity import *
+from Circuit import Circuit
+from Quantize import quantize
+
+PLOT = True
+
+def main():
+    # ---- Shared Hyper-parameters ----
+    n_cut              = 201            # Number of charge states, -n_cut : n_cut
+    n_proj             = 201              # number of states to truncate to
+    clock_multiplier   = 8
+    ramp               = ['01000000', '11000000', '10000000', '00000000', '00000000']
+    
+    # ---- Transmon Circuit Hyper-parameters ----
+    EJ_EC = 69
+    EC    = h * 250 * 1e6   # Charging energy [J]
+    THETA = 0.03
+    
+    # ---- Derived Physical Constants ----
+    EJ    = EJ_EC * EC
+    n_zpf = (1/2) * (EJ_EC / 2)**(1/4) # approximation
+    BETA  = THETA / (2 * n_zpf)        # approximation
+    C_T   = e**2 / (2 * EC)
+    CC    = (BETA * hbar * C_T) / FLUX_QUANTUM
+    C     = C_T - CC
+    
+    # ---- Graph Representation of the Transmon Circuit ----
+    transmon_graph_rep = {
+        'nodes': ['a'],
+        'capacitors': [
+            ('a', 'gnd', C),  # Shunt capacitor
+            ('a', 'gnd', CC), # Coupling capacitor
+        ],
+        'inductors': [],
+        'josephson_elements': [
+            ('a', 'gnd', EJ),
+        ],
+        'external_flux': {}
+    }
+    
+    # ---- Harmonic Oscillator LC Circuit Hyper-parameters ----
+    C          = 100e-15 # [F]
+    L          = 10e-9   # [H]
+    
+    # ---- Graph Representation of the LC Circuit ----
+    LC_graph_rep = {
+        'nodes': ['a'],
+        'capacitors': [
+            ('a', 'gnd', C),  # Shunt + Coupling Capacitance
+        ],
+        'inductors': [
+            ('a', 'gnd', L)
+            ],
+        'josephson_elements': [],
+        'external_flux': {}
+    }
+    
+    circuit = Circuit(graph_rep=LC_graph_rep)
+    
+    n, n_zpf, creation, annihilation, H0, energies, energy_states, alpha, f_q, omega_q = quantize(circuit=circuit, n_cut=n_cut)
+    
+    print(f"n['energy'][:2,:2]: ") 
+    print(n["energy"][:2,:2])
+    print(f"n Hermitian = {np.allclose(n["energy"], n["energy"].conj().T)}")
+    print(f"n Unitary = {np.allclose(np.eye(len(n["energy"])), n["energy"] @ n["energy"].conj().T)}")
+    
+    
+    # ---- Create Quantum States |0>, |1>, and the projector onto the computational subspace H_2 ----
+    zero_state = Wavefunction(basis_to_coefs={"energy" : np.array([1] + (n_proj - 1) * [0])})
+    one_state  = Wavefunction(basis_to_coefs={"energy" : np.array([0] + [1] + (n_proj - 2) * [0])})
+    
+    P_Q = Operator(
+        basis_to_matrix={"energy": np.outer(to_ket(zero_state["energy"]), to_bra(zero_state["energy"])) + np.outer(to_ket(one_state["energy"]), to_bra(one_state["energy"]))}
+    )
+    
+    # ---- Creating Our Initial Quantum State in Energy/Fock Basis, |0> ----
+    initial_state = Wavefunction(basis_to_coefs={"energy" : zero_state["energy"].copy()})
+
+    populations = [[] for i in range(n_cut)] # to store measurement probabilities
+    
+    if PLOT:
+        plt.ion()
+        fig = plt.figure(figsize=(16, 8))
+
+        # ---- Bloch Sphere Subplot ----
+        ax_bloch = fig.add_subplot(2, 3, 1, projection='3d')
+
+        # ---- Projection Subplots ----
+        ax_xy = fig.add_subplot(2, 3, 2)
+        ax_xz = fig.add_subplot(2, 3, 3)
+        ax_yz = fig.add_subplot(2, 3, 4)
+
+        # ---- Fock Populations Subplot ----
+        ax_fock = fig.add_subplot(2, 3, (5, 6))
+
+        # Store Bloch vector history for trail
+        bx_hist, by_hist, bz_hist = [], [], []
+            
+    # Target Unitary rotation
+    theta_target = np.pi/2
+    
+    # Number of kicks in pulse train
+    N = 47
+    # N = int(np.round(theta_target / theta))
+    
+    system = System(
+        energy_states=energy_states,
+        n=n,
+        n_zpf=n_zpf,
+        theta=THETA,
+        H0=H0,
+        qubit_angular_frequency=omega_q,
+        clock_multiplier=clock_multiplier,
+        initial_state=initial_state,
+        N=N,
+        ramp=ramp
+    )
+    
+    RY_TARGET = Operator(
+        basis_to_matrix={"energy": np.array([
+                [np.cos(theta_target / 2), -np.sin(theta_target / 2)],
+                [np.sin(theta_target / 2), np.cos(theta_target / 2)]
+            ])}
+    )
+
+    for i in range(100):
+        system.state.reset_accumulated_unitary() 
+        
+        system.RY()
+        U = system.state.get_accumulated_unitary()
+
+        U_Q_full = Operator(
+            basis_to_matrix={"energy" : P_Q["energy"] @ U["energy"] @ P_Q["energy"]}
+        )
+        
+        U_Q = Operator(
+            basis_to_matrix={"energy": U_Q_full["energy"][:2, :2]}
+        )
+        
+        L1 = get_L1(U=U_Q, basis="energy")
+        
+        # print(f"Leakage Metric: {leakage}")
+        process_fidelity = get_process_fidelity(U_Q=U_Q, U_target=RY_TARGET, basis="energy")
+        # print(f"Process Fidelity: {process_fidelity}")
+        avg_gate_fidelity = get_average_gate_fidelity(process_fidelity=process_fidelity, L1=L1)
+        # print(f"Average Gate Fidelity in the Absence of a Loss Channel: {avg_gate_fidelity}")
+        print(f"L1: {L1}")
+        r = np.linalg.norm(get_pauli_coefs(U=U_Q, basis="energy"))
+        print(f"r: {r}")
+        print(f"Fidelity: {avg_gate_fidelity}")
+        
+        probabilities = system.state.get_probabilities("energy")
+        
+        for idx, p in enumerate(probabilities):
+            populations[idx].append(p)
+        
+        if PLOT:
+            state_azimuth, state_inclination = get_spherical_coords(alpha=system.state["energy"][0],
+                                                                    beta=system.state["energy"][1])
+            bx, by, bz = get_rectangular_coords(azimuth=state_azimuth, inclination=state_inclination)
+            
+            bx_hist.append(bx)
+            by_hist.append(by)
+            bz_hist.append(bz)
+            
+            # ---- Bloch Sphere ----
+            ax_bloch.cla()
+            
+            u = np.linspace(0, 2 * np.pi, 30)
+            v = np.linspace(0, np.pi, 20)
+            x = np.outer(np.cos(u), np.sin(v))
+            y = np.outer(np.sin(u), np.sin(v))
+            z = np.outer(np.ones(u.size), np.cos(v))
+            ax_bloch.plot_wireframe(x, y, z, alpha=0.08, color='gray', linewidth=0.5)
+            
+            ax_bloch.plot([-1, 1], [0, 0], [0, 0], color='gray', linewidth=0.5, linestyle='--')
+            ax_bloch.plot([0, 0], [-1, 1], [0, 0], color='gray', linewidth=0.5, linestyle='--')
+            ax_bloch.plot([0, 0], [0, 0], [-1, 1], color='gray', linewidth=0.5, linestyle='--')
+            
+            ax_bloch.text(0, 0, 1.15, "|0⟩", ha='center', fontsize=12, fontweight='bold')
+            ax_bloch.text(0, 0, -1.15, "|1⟩", ha='center', fontsize=12, fontweight='bold')
+            ax_bloch.text(1.15, 0, 0, "X", ha='center', fontsize=10, color='gray')
+            ax_bloch.text(0, 1.15, 0, "Y", ha='center', fontsize=10, color='gray')
+            
+            ax_bloch.quiver(0, 0, 0, bx, by, bz, color='red', arrow_length_ratio=0.08, linewidth=2.5)
+            ax_bloch.scatter([bx], [by], [bz], color='red', s=40, zorder=5)
+            
+            ax_bloch.set_xlim([-1.3, 1.3])
+            ax_bloch.set_ylim([-1.3, 1.3])
+            ax_bloch.set_zlim([-1.3, 1.3])
+            ax_bloch.set_box_aspect([1, 1, 1])
+            ax_bloch.set_title("Bloch Sphere", fontsize=14, pad=10)
+            ax_bloch.set_axis_off()
+            ax_bloch.view_init(elev=20, azim=30)
+            
+            # ---- XY Projection ----
+            ax_xy.cla()
+            circle = plt.Circle((0, 0), 1, fill=False, color='gray', linewidth=0.5)
+            ax_xy.add_patch(circle)
+            ax_xy.plot(bx_hist, by_hist, color='blue', alpha=0.3, linewidth=1)
+            ax_xy.scatter([bx], [by], color='red', s=50, zorder=5)
+            ax_xy.axhline(0, color='gray', linewidth=0.3)
+            ax_xy.axvline(0, color='gray', linewidth=0.3)
+            ax_xy.set_xlim([-1.3, 1.3])
+            ax_xy.set_ylim([-1.3, 1.3])
+            ax_xy.set_aspect('equal')
+            ax_xy.set_xlabel("X")
+            ax_xy.set_ylabel("Y")
+            ax_xy.set_title("XY Projection", fontsize=12)
+            
+            # ---- XZ Projection ----
+            ax_xz.cla()
+            circle = plt.Circle((0, 0), 1, fill=False, color='gray', linewidth=0.5)
+            ax_xz.add_patch(circle)
+            ax_xz.plot(bx_hist, bz_hist, color='blue', alpha=0.3, linewidth=1)
+            ax_xz.scatter([bx], [bz], color='red', s=50, zorder=5)
+            ax_xz.axhline(0, color='gray', linewidth=0.3)
+            ax_xz.axvline(0, color='gray', linewidth=0.3)
+            ax_xz.set_xlim([-1.3, 1.3])
+            ax_xz.set_ylim([-1.3, 1.3])
+            ax_xz.set_aspect('equal')
+            ax_xz.set_xlabel("X")
+            ax_xz.set_ylabel("Z")
+            ax_xz.set_title("XZ Projection", fontsize=12)
+            
+            # ---- YZ Projection ----
+            ax_yz.cla()
+            circle = plt.Circle((0, 0), 1, fill=False, color='gray', linewidth=0.5)
+            ax_yz.add_patch(circle)
+            ax_yz.plot(by_hist, bz_hist, color='blue', alpha=0.3, linewidth=1)
+            ax_yz.scatter([by], [bz], color='red', s=50, zorder=5)
+            ax_yz.axhline(0, color='gray', linewidth=0.3)
+            ax_yz.axvline(0, color='gray', linewidth=0.3)
+            ax_yz.set_xlim([-1.3, 1.3])
+            ax_yz.set_ylim([-1.3, 1.3])
+            ax_yz.set_aspect('equal')
+            ax_yz.set_xlabel("Y")
+            ax_yz.set_ylabel("Z")
+            ax_yz.set_title("YZ Projection", fontsize=12)
+            
+            # ---- Fock Populations ----
+            ax_fock.cla()
+            ax_fock.bar(np.arange(n_proj), probabilities, color='steelblue')
+            ax_fock.set_xlim(-0.5, n_proj - 0.5)
+            ax_fock.set_ylim(0, 1)
+            ax_fock.set_xlabel("Energy (Or Fock) State |n⟩", fontsize=12)
+            ax_fock.set_ylabel("Probability", fontsize=12)
+            ax_fock.set_title(f"Energy (Or Fock) Populations (kick # = {i:.4e} s)", fontsize=14)
+            
+            fig.tight_layout()
+            fig.canvas.draw()
+            fig.canvas.flush_events()
+
+        print(f"Final State: ")
+        print(system.state["energy"][:3])
+    
+    if PLOT:
+        plt.ioff()
+        plt.show()
+        
+    
+if __name__=="__main__":
+    main()
+
+
+================ System.py ================
+from __future__ import annotations
+import numpy as np
+from scipy.linalg import expm
+
+from Operator import Operator
+from Wavefunction import Wavefunction
+from constants import *
+
+class System():
+    def __init__(self, energy_states: np.ndarray, n: Operator, n_zpf: float, theta: float, H0: Operator, qubit_angular_frequency: float, clock_multiplier: int, initial_state: Wavefunction, N: int, ramp: list[str]):
+        self.theta   = theta
+        self.H0      = H0
+        self.omega_q = qubit_angular_frequency
+        self.M       = clock_multiplier
+        self.state   = initial_state
+        self.N       = N
+        self.ramp    = ramp
+        
+        self.T_q     = (2*np.pi) / qubit_angular_frequency # Qubit period [s]
+        self.T_c     = self.T_q / self.M                   # Clock period [s]
+                
+        self.U_kick = Operator(
+            basis_to_matrix={"energy": expm(-1j * (theta / n_zpf) / 2 * n["energy"])}
+        )
+                
+        
+    def free_evolve(self, clock_cycles: int):
+        self.state.apply(
+            operator=Operator(
+                {"energy": expm(-1j * self.H0["energy"] * (clock_cycles * self.T_c) / hbar)}
+                )
+            )
+
+    def RY(self):
+        
+        N = self.N
+        
+        self.on_ramp_evolve()
+                
+        for _ in range(N):
+            self.state.apply(self.U_kick)
+            
+            self.free_evolve(
+                clock_cycles=self.M,
+            )
+        
+        self.off_ramp_evolve()
+            
+    def on_ramp_evolve(self):
+    
+        for sequence in self.ramp:
+            for action in sequence:
+                if action == "0":
+                    # free evolve for a single clock cycle
+                    self.free_evolve(clock_cycles=1)
+                else:
+                    # kick
+                    self.state.apply(self.U_kick)
+
+                    # free evolve for a single clock cycle
+                    self.free_evolve(clock_cycles=1)
+
+    def off_ramp_evolve(self):
+        flipped_ramps = [self.flip_X_ramp(r) for r in self.ramp][::-1]
+        
+        for sequence in flipped_ramps:
+            for action in sequence:
+                if action == "0":
+                    # free evolve for a single clock cycle
+                    self.free_evolve(clock_cycles=1)
+                else:
+                    # kick
+                    self.state.apply(self.U_kick)
+
+                    # free evolve for a single clock cycle
+                    self.free_evolve(clock_cycles=1)
+
+    @staticmethod
+    def flip_X_ramp(ramp: str):
+        n = len(ramp)
+        flipped = ['0'] * n
+        for i in range(n):
+            if ramp[i] == '1':
+                new_pos = (n - i) % n
+                flipped[new_pos] = '1'
+        return ''.join(flipped)
+
+
+================ utils.py ================
+import numpy as np
+
+from PauliMatrices import PAULI_MATRICES
+
+def get_spherical_coords(alpha, beta):
+    norm = np.sqrt(np.abs(alpha)**2 + np.abs(beta)**2)
+    alpha = alpha / norm
+    beta = beta / norm
+    
+    phi = np.arctan2(alpha.imag, alpha.real)
+    tau = np.arctan2(beta.imag, beta.real)
+    
+    azimuth = phi - tau
+    
+    inclination = 2 * np.arccos(np.clip(np.abs(alpha), -1, 1))
+    
+    return azimuth, inclination
+    
+    
+def get_rectangular_coords(azimuth, inclination):
+    x = np.sin(inclination) * np.cos(azimuth)
+    y = np.sin(inclination) * np.sin(azimuth)
+    z = np.cos(inclination)
+    
+    return x, y, z
+
+def create_upper_lower(value: float, dim: int):
+    matrix = np.zeros((dim, dim))
+    
+    for i in range(dim):
+        for j in range(dim):
+            if (i + 1) == j:
+                matrix[i][j] = value
+            elif (i - 1) == j:
+                matrix[i][j] = value
+                
+    return matrix
+
+def extract_relative_phase(U: np.ndarray):
+    if len(U) != 2:
+        print(f"Only works for 2x2 unitaries")
+        return
+    
+    alpha = U[0][0]
+    beta = U[1][1]
+    
+    phi = np.angle(beta) - np.angle(alpha)
+    
+    return phi
+
+def vector_change_basis(transformation_matrix: np.ndarray, vector: np.ndarray):
+    return transformation_matrix.conj().T @ vector
+
+def matrix_change_basis(transformation_matrix: np.ndarray, matrix: np.ndarray):
+    return transformation_matrix.conj().T @ matrix @ transformation_matrix
+
+def fock_to_phase(self, fock_coefs, phases: np.ndarray):
+    N = len(fock_coefs)
+    K = len(phases)
+    
+    linear_map = np.zeros((K, N), dtype=complex)
+    
+    for k in range(K):
+        phase = phases[k]
+        for n in range(N):
+            linear_map[k][n] = np.exp(-1j * n * phase) / np.sqrt(2*np.pi)
+            
+    return vector_change_basis(transformation_matrix=linear_map, vector=fock_coefs)
+    
+def to_ket(coefs: np.ndarray):
+    return coefs.reshape(-1, 1)
+
+def to_bra(coefs: np.array):
+    return np.array([c.conj() for c in coefs])
+
+def get_pauli_coefs(U: np.ndarray, basis: str):
+        if U[basis].shape != (2, 2):
+            raise Exception("Matrix is Not (2 x 2)")
+
+        coefs = np.zeros(len(PAULI_MATRICES), dtype=complex)
+    
+        for idx, matrix in enumerate(PAULI_MATRICES):
+            coefs[idx] = np.trace(matrix @ U[basis]) / 2
+            
+        return coefs
+
+
+
+
+
+================ Wavefunction.py ================
+from __future__ import annotations
+from typing import Optional
+import numpy as np
+
+from Operator import Operator
+class Wavefunction():
+    """
+    A wavefunction is a vector in a complex vector space,
+    along with a specified basis
+    """
+    
+    def __init__(self, basis_to_coefs: dict):
+        self.basis_to_coefs = basis_to_coefs
+        
+        self.U = Operator({})
+        
+        for basis, coefs in basis_to_coefs.items():
+            self.U[basis] = np.eye(len(coefs))
+        
+    def get_projection(self, basis: str):
+        return self.basis_to_coefs[basis]
+    
+    def __getitem__(self, key):
+        return self.get_projection(basis=key)
+    
+    def set_projection(self, basis: str, coefs: np.ndarray):
+        self.basis_to_coefs[basis] = coefs
+        
+    def __setitem__(self, key, value):
+        self.set_projection(basis=key, coefs=value)
+        
+    def get_probabilities(self, basis: str):
+        return np.abs(self.basis_to_coefs[basis])**2
+            
+    def apply(self, operator: Operator):        
+        # Apply the operator to each basis representation of the wavefunction
+        for basis, coefs in self.basis_to_coefs.items():
+            n_proj = len(coefs)
+            self.basis_to_coefs[basis] = (operator[basis][:n_proj, :n_proj] @ coefs.reshape(-1, 1)).flatten()
+            self.U[basis] = operator[basis][:n_proj, :n_proj] @ self.U[basis]
+        
+    def get_accumulated_unitary(self):
+        return self.U
+
+    def reset_accumulated_unitary(self):
+        for basis, coefs in self.U.basis_to_matrix.items():
+            self.U[basis] = np.eye(len(coefs))
+    
+    def __delitem__(self, key):
+        del self.basis_to_coefs[key]
+        
+
+

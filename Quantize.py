@@ -38,16 +38,13 @@ def quantize(circuit: Circuit, n_cut: int):
     -------
     QuantizationResult
     """
-    if circuit.N != 1:
-        raise NotImplementedError("Quantization currently supports single-node circuits only")
-
-    C_T   = circuit.capacitance_matrix[0][0]
-    EC    = e**2 / (2 * C_T)
+    coupling_matrix = e**2 / (2 * circuit.capacitance_matrix)
+    
     annihilation, creation  = QuantumOscillator.create_ladder_operators(n_cut=n_cut)
     
     if len(circuit.josephson_elements) > 0:
-        EJ    = circuit.josephson_elements[0].EJ
-        EJ_EC = EJ / EC
+        EJ    = np.array([josephson_element.EJ for josephson_element in circuit.josephson_elements])
+        EJ_EC = EJ / coupling_matrix
         
         # Charge operator
         n = Operator(
@@ -82,6 +79,7 @@ def quantize(circuit: Circuit, n_cut: int):
         qubit_frequency         = (energies[1] - energies[0]) / h 
         qubit_angular_frequency = qubit_frequency * (2*np.pi)
     
+        # NOTE: I need to understand this better, Claude gave me this fix and I don't know why it works
         # Fix eigenvector phases so that <psi_i|n|psi_{i+1}> is negative imaginary
         for i in range(len(energies) - 1):
             element = energy_states[:, i].conj() @ n["charge"] @ energy_states[:, i + 1]

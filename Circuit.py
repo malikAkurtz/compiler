@@ -34,7 +34,7 @@ class Circuit:
         self.josephson_elements                               = [e for e in self.inductive_sub_graph.edges if isinstance(e, JosephsonElement)]
         self.active_nodes, self.passive_nodes                 = self._partition_nodes()
         self.N                                                = len(self.active_nodes)
-        self.P                                                = self.N + len(self.passive_nodes) + 1
+        self.P                                                = len(self.active_nodes) + len(self.passive_nodes) + 1 # + 1 for ground
         self.capacitance_matrix, self.inv_inductance_matrix   = self._build_matrices()
         self.inv_capacitance_matrix                           = np.linalg.inv(self.capacitance_matrix)
         self.offset_dict                                      = graph_rep["external_flux"]
@@ -53,49 +53,63 @@ class Circuit:
         any node that lacks a capacitive branch.
         """
         gnd = Node(label="gnd", branches=None)
-        label_node_dict = {"gnd": gnd}
+        label_to_node = {"gnd": gnd}
         branches = []
 
-        for label in graph_rep["nodes"]:
-            label_node_dict[label] = Node(label=label, branches=None)
+        # Create the node objects from the circuit dictionary
+        for label in graph_rep["nodes"]: # gnd not included
+            label_to_node[label] = Node(label=label, branches=None)
 
-        for entry in graph_rep['capacitors']:
-            node1 = label_node_dict[entry[0]]
-            node2 = label_node_dict[entry[1]]
-            cap = Capacitor(capacitance=entry[2], nodes=(node1, node2))
-            branches.append(cap)
-            node1.branches.append(cap)
-            node2.branches.append(cap)
+        # Create the capacitor objects from the circuit dictionary
+        # and add it to the appropriate nodes
+        for (node1_label, node2_label, capacitance) in graph_rep['capacitors']:
+            node1 = label_to_node[node1_label]
+            node2 = label_to_node[node2_label]
+            
+            capacitor = Capacitor(capacitance=capacitance, nodes=(node1, node2))
+            
+            branches.append(capacitor)
+            node1.branches.append(capacitor)
+            node2.branches.append(capacitor)
+            
+        # Create the linear inductor objects from the circuit dictionary
+        # and add it to the appropriate nodes
+        for (node1_label, node2_label, inductance) in graph_rep['inductors']:
+            node1 = label_to_node[node1_label]
+            node2 = label_to_node[node2_label]
+            
+            inductor = Inductor(inductance=inductance, nodes=(node1, node2))
+            
+            branches.append(inductor)
+            node1.branches.append(inductor)
+            node2.branches.append(inductor)
 
-        for entry in graph_rep['inductors']:
-            node1 = label_node_dict[entry[0]]
-            node2 = label_node_dict[entry[1]]
-            ind = Inductor(inductance=entry[2], nodes=(node1, node2))
-            branches.append(ind)
-            node1.branches.append(ind)
-            node2.branches.append(ind)
-
-        for entry in graph_rep['josephson_elements']:
-            node1 = label_node_dict[entry[0]]
-            node2 = label_node_dict[entry[1]]
-            jj = JosephsonElement(josephson_energy=entry[2], nodes=(node1, node2))
-            branches.append(jj)
-            node1.branches.append(jj)
-            node2.branches.append(jj)
+        # Create the Josephson element objects from the circuit dictionary
+        # and add it to the appropriate nodes
+        for (node1_label, node2_label, josephson_energy) in graph_rep['josephson_elements']:
+            node1 = label_to_node[node1_label]
+            node2 = label_to_node[node2_label]
+            
+            josephson_element = JosephsonElement(josephson_energy=josephson_energy, nodes=(node1, node2))
+            
+            branches.append(josephson_element)
+            node1.branches.append(josephson_element)
+            node2.branches.append(josephson_element)
 
         # Break symmetry: add tiny parasitic capacitor to ground for nodes with no
         # capacitive branch (prevents singular capacitance matrix)
-        for node in label_node_dict.values():
+        for node in label_to_node.values():
             if node.label == "gnd":
                 continue
-            has_cap = any(isinstance(b, CapacitiveElement) for b in node.branches)
-            if not has_cap:
-                cap = Capacitor(capacitance=1e-20, nodes=(node, gnd))
-                branches.append(cap)
-                node.branches.append(cap)
-                gnd.branches.append(cap)
+            has_capacitor = any(isinstance(b, CapacitiveElement) for b in node.branches)
+            if not has_capacitor:
+                capacitor = Capacitor(capacitance=1e-20, nodes=(node, gnd))
+                
+                branches.append(capacitor)
+                node.branches.append(capacitor)
+                gnd.branches.append(capacitor)
 
-        return Graph(list(label_node_dict.values()), branches)
+        return Graph(list(label_to_node.values()), branches)
 
     # =====================================================================
     #   Sub-Graph Construction
@@ -105,9 +119,12 @@ class Circuit:
         """Split master graph into capacitive and inductive sub-graphs."""
         nodes    = self.circuit_graph.vertices
         branches = self.circuit_graph.edges
-        cap_branches = [b for b in branches if isinstance(b, CapacitiveElement)]
-        ind_branches = [b for b in branches if isinstance(b, InductiveElement)]
-        return Graph(nodes, cap_branches), Graph(nodes, ind_branches)
+        # Capacitors
+        capacitive_branches = [b for b in branches if isinstance(b, CapacitiveElement)]
+        # Inductors and Josephson elements
+        inductive_branches = [b for b in branches if isinstance(b, InductiveElement)]
+        
+        return Graph(nodes, capacitive_branches), Graph(nodes, inductive_branches)
 
     # =====================================================================
     #   Node Partitioning
@@ -116,11 +133,20 @@ class Circuit:
     def _partition_nodes(self):
         """Classify nodes as active (connected to inductor/JJ) or passive."""
         active, passive = [], []
+        
         for node in self.circuit_graph.vertices:
             if node.label == "gnd":
                 continue
+            
             _, inductive_degree = node._get_degree()
-            (active if inductive_degree > 0 else passive).append(node)
+            
+            # Active
+            if inductive_degree > 0:
+                active.append(node)
+            # Passive
+            else:
+                passive.append(node)
+                
         return active, passive
 
     # =====================================================================
@@ -132,29 +158,31 @@ class Circuit:
         Build the reduced (ground row/column removed) capacitance and
         inverse-inductance matrices using the graph-Laplacian approach.
         """
-        C_mat = np.zeros((self.P, self.P))
-        L_inv = np.zeros((self.P, self.P))
+        capacitance_matrix        = np.zeros((self.P, self.P))
+        inverse_inductance_matrix = np.zeros((self.P, self.P))
 
         for branch in self.circuit_graph.edges:
-            n1 = branch.nodes[0].label
-            n2 = branch.nodes[1].label
-            j = 0 if n1 == "gnd" else self.labels.index(n1) + 1
-            k = 0 if n2 == "gnd" else self.labels.index(n2) + 1
+            node1_label = branch.nodes[0].label
+            node2_label = branch.nodes[1].label
+            i = 0 if node1_label == "gnd" else self.labels.index(node1_label) + 1 # + 1 to account for gnd being absent in labels
+            j = 0 if node2_label == "gnd" else self.labels.index(node2_label) + 1
 
             if isinstance(branch, Capacitor):
-                C_mat[j][k] -= branch.C
-                C_mat[k][j] -= branch.C
+                capacitance_matrix[i][j] -= branch.C
+                capacitance_matrix[j][i] -= branch.C
             elif isinstance(branch, Inductor):
-                L_inv[j][k] -= 1 / branch.L
-                L_inv[k][j] -= 1 / branch.L
+                inverse_inductance_matrix[i][j] -= 1 / branch.L
+                inverse_inductance_matrix[j][i] -= 1 / branch.L
 
-        for j in range(self.P):
-            C_mat[j][j] = -np.sum(C_mat[j])
-            L_inv[j][j] = -np.sum(L_inv[j])
+        for i in range(self.P):
+            capacitance_matrix[i][i]        = -np.sum(capacitance_matrix[i])
+            inverse_inductance_matrix[j][j] = -np.sum(inverse_inductance_matrix[j])
 
-        C_mat = np.delete(np.delete(C_mat, 0, axis=0), 0, axis=1)
-        L_inv = np.delete(np.delete(L_inv, 0, axis=0), 0, axis=1)
-        return C_mat, L_inv
+        # Remove the row/col corresponding to gnd node
+        capacitance_matrix = np.delete(np.delete(capacitance_matrix, 0, axis=0), 0, axis=1)
+        inverse_inductance_matrix = np.delete(np.delete(inverse_inductance_matrix, 0, axis=0), 0, axis=1)
+        
+        return capacitance_matrix, inverse_inductance_matrix
 
     # =====================================================================
     #   Classical Mechanics Helpers

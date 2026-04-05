@@ -1,5 +1,6 @@
 import numpy as np
 from scipy.linalg import expm
+from scipy.linalg import ishermitian
 import matplotlib.pyplot as plt
 
 from System import System
@@ -19,7 +20,6 @@ def main():
     n_proj             = 201              # number of states to truncate to
     clock_multiplier   = 8
     ramp               = ['01000000', '11000000', '10000000', '00000000', '00000000']
-    # ramp = []
     
     # ---- Transmon Circuit Hyper-parameters ----
     EJ_EC = 69
@@ -27,9 +27,9 @@ def main():
     THETA = 0.03
     
     # ---- Derived Physical Constants ----
-    n_zpf = (1/2)*(EJ_EC / 2)**(1/4)
-    BETA  = THETA / (2 * n_zpf) # Fock approximation
-    EJ    = EJ_EC * EC                 # [J]
+    EJ    = EJ_EC * EC
+    n_zpf = (1/2) * (EJ_EC / 2)**(1/4) # approximation
+    BETA  = THETA / (2 * n_zpf)        # approximation
     C_T   = e**2 / (2 * EC)
     CC    = (BETA * hbar * C_T) / FLUX_QUANTUM
     C     = C_T - CC
@@ -65,11 +65,15 @@ def main():
         'external_flux': {}
     }
     
-    circuit = Circuit(graph_rep=transmon_graph_rep)
+    circuit = Circuit(graph_rep=LC_graph_rep)
     
     n, n_zpf, creation, annihilation, H0, energies, energy_states, alpha, f_q, omega_q = quantize(circuit=circuit, n_cut=n_cut)
     
-    print(f"n['energy'][:3,:3]: {n["energy"][:3,:3]}")
+    print(f"n['energy'][:2,:2]: ") 
+    print(n["energy"][:2,:2])
+    print(f"n Hermitian = {np.allclose(n["energy"], n["energy"].conj().T)}")
+    print(f"n Unitary = {np.allclose(np.eye(len(n["energy"])), n["energy"] @ n["energy"].conj().T)}")
+    
     
     # ---- Create Quantum States |0>, |1>, and the projector onto the computational subspace H_2 ----
     zero_state = Wavefunction(basis_to_coefs={"energy" : np.array([1] + (n_proj - 1) * [0])})
@@ -129,7 +133,7 @@ def main():
             ])}
     )
 
-    for i in range(1):
+    for i in range(100):
         system.state.reset_accumulated_unitary() 
         
         system.RY()
