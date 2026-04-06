@@ -35,7 +35,7 @@ def main():
     C     = C_T - CC
     
     # ---- Graph Representation of the Transmon Circuit ----
-    transmon_graph_rep = {
+    graph_rep = {
         'nodes': ['a'],
         'capacitors': [
             ('a', 'gnd', C),  # Shunt capacitor
@@ -48,31 +48,16 @@ def main():
         'external_flux': {}
     }
     
-    # ---- Harmonic Oscillator LC Circuit Hyper-parameters ----
-    C          = 100e-15 # [F]
-    L          = 10e-9   # [H]
     
-    # ---- Graph Representation of the LC Circuit ----
-    LC_graph_rep = {
-        'nodes': ['a'],
-        'capacitors': [
-            ('a', 'gnd', C),  # Shunt + Coupling Capacitance
-        ],
-        'inductors': [
-            ('a', 'gnd', L)
-            ],
-        'josephson_elements': [],
-        'external_flux': {}
-    }
+    circuit = Circuit(graph_rep=graph_rep)
     
-    circuit = Circuit(graph_rep=LC_graph_rep)
+    transmons, EC_matrix = quantize(circuit=circuit, n_cut=n_cut)
     
-    n, n_zpf, creation, annihilation, H0, energies, energy_states, alpha, f_q, omega_q = quantize(circuit=circuit, n_cut=n_cut)
-    
-    print(f"n['energy'][:2,:2]: ") 
-    print(n["energy"][:2,:2])
-    print(f"n Hermitian = {np.allclose(n["energy"], n["energy"].conj().T)}")
-    print(f"n Unitary = {np.allclose(np.eye(len(n["energy"])), n["energy"] @ n["energy"].conj().T)}")
+    for k in range(len(transmons)):
+        print(f"n['energy'][:2,:2]: ") 
+        print(transmons[k].n["energy"][:2,:2])
+        print(f"n Hermitian = {np.allclose(transmons[k].n["energy"], transmons[k].n["energy"].conj().T)}")
+        print(f"n Unitary = {np.allclose(np.eye(len(transmons[k].n["energy"])), transmons[k].n["energy"] @ transmons[k].n["energy"].conj().T)}")
     
     
     # ---- Create Quantum States |0>, |1>, and the projector onto the computational subspace H_2 ----

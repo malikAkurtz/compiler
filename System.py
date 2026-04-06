@@ -2,28 +2,57 @@ from __future__ import annotations
 import numpy as np
 from scipy.linalg import expm
 
+from Transmon import Transmon
 from Operator import Operator
 from Wavefunction import Wavefunction
 from constants import *
 
 class System():
-    def __init__(self, energy_states: np.ndarray, n: Operator, n_zpf: float, theta: float, H0: Operator, qubit_angular_frequency: float, clock_multiplier: int, initial_state: Wavefunction, N: int, ramp: list[str]):
-        self.theta   = theta
-        self.H0      = H0
-        self.omega_q = qubit_angular_frequency
-        self.M       = clock_multiplier
-        self.state   = initial_state
-        self.N       = N
-        self.ramp    = ramp
+    def __init__(self, transmons: list[Transmon], EC_matrix: np.ndarray, thetas: np.ndarray, clock_multiplier: int, initial_state: Wavefunction, ramp: list[str], N_kicks: int, flux_schedule: np.ndarray):
+        self.transmons     = transmons
+        self.EC_matrix     = EC_matrix
+        self.thetas        = thetas
+        self.M             = clock_multiplier
+        self.state         = initial_state  
+        self.ramp          = ramp
+        self.N_kicks       = N_kicks
+        self.flux_schedule = flux_schedule
         
-        self.T_q     = (2*np.pi) / qubit_angular_frequency # Qubit period [s]
-        self.T_c     = self.T_q / self.M                   # Clock period [s]
+        # ---- Derive Qubit and Clock Periods ----
+        self.T_q           = np.array([(2*np.pi) / t.qubit_angular_frequency for t in self.transmons]) # Qubit period [s]
+        # We assume our computational qubits share the same angular frequency s.t. the clock period is well-defined
+        self.T_c           = self.T_q[0] / self.M                                                      # Clock period [s]
+        
+        # ---- Derive Kick Operators for Logical Qubits 1 (and 2)
+        self.transmon_to_kick = {}
+        
+        self.transmon_to_kick[0] = Operator(
+                basis_to_matrix={"energy": expm(-1j * (thetas[0] / self.transmons[0].r) / 2 * self.transmons[0].n["energy"])}
+            )
+        
+        if len(transmons) > 0:
+            self.transmon_to_kick[2] = Operator(
+                basis_to_matrix={"energy": expm(-1j * (thetas[1] / self.transmons[2].r) / 2 * self.transmons[2].n["energy"])}
+            )
+        
+        # ---- Derive Coupling Hamiltonain HC ----
+        coupling_sum = 0
+        for k in range(len(transmons)):
+            for l in range(len(transmons)):
+                if k == l:
+                    continue
+                else:
+                    coupling_sum += (self.transmons[k].n * self.EC_matrix[k][l] * self.transmons[l].n)
                 
-        self.U_kick = Operator(
-            basis_to_matrix={"energy": expm(-1j * (theta / n_zpf) / 2 * n["energy"])}
+        self.HC = Operator(
+            basis_to_matrix={"energy" : 4 * coupling_sum}
+        )
+        
+        # ---- Derive the Unperturbed Hamiltonian H0 ----
+        self.H0 = Operator(
+            basis_to_matrix={"energy" : np.sum([t.H0 for t in self.transmons]) + self.HC["energy"]}
         )
                 
-        
     def free_evolve(self, clock_cycles: int):
         self.state.apply(
             operator=Operator(
@@ -31,7 +60,7 @@ class System():
                 )
             )
 
-    def RY(self):
+    def RY(self, qubit: int):
         
         N = self.N
         

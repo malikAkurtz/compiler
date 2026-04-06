@@ -1,3 +1,95 @@
+================ Branch.py ================
+from __future__ import annotations
+from typing import Optional
+import numpy as np
+from constants import PHI_0
+
+######################################## NODE CLASS ########################################
+class Node:
+    def __init__(self, label: str, branches: Optional[list[Branch]] = None):
+        # e.g. "a", "b", etc.
+        self.label = label
+        # e.g [capacitor1, inductor1, JJ1, ...]
+        self.branches = branches if branches is not None else []
+
+    def _get_degree(self):
+        # number of connected capacitive branches
+        capacitive_degree = 0
+        # number of connected inductive branches
+        inductive_degree = 0
+        
+        for branch in self.branches:
+            if isinstance(branch, CapacitiveElement):
+                capacitive_degree += 1
+            if isinstance(branch, InductiveElement):
+                inductive_degree += 1
+                
+        return capacitive_degree, inductive_degree    
+######################################## NODE CLASS ######################################## 
+
+######################################## BRANCH CLASS ########################################
+# A BRANCH IS AN ELEMENT, TWO NODES CAN BE CONNECTED BY MULTIPLE BRANCHES
+class Branch:
+    def __init__(self, nodes: Optional[tuple[Node]] = None):
+        self.nodes = nodes
+        
+    def calculate_energy(self):
+        pass
+######################################## BRANCH CLASS ########################################
+
+######################################## CAPACITIVE ELEMENT CLASS ########################################
+class CapacitiveElement(Branch):
+    def __init__(self, capacitance: float, nodes: Optional[tuple[Node]] = None):
+        super().__init__(nodes)
+        self.C = capacitance
+        
+    def calculate_energy(self, branch_charge: float, branch_charge_offset: float):
+        return ((branch_charge - branch_charge_offset)**2) / (2 * self.C)
+######################################## CAPACITIVE ELEMENT CLASS ########################################
+        
+######################################## CAPACITOR  CLASS ########################################
+class Capacitor(CapacitiveElement):
+    def __init__(self, capacitance: float, nodes: Optional[tuple[Node]] = None):
+        super().__init__(capacitance, nodes)
+######################################## CAPACITOR ELEMENT CLASS ########################################
+
+######################################## INDUCTIVE ELEMENT CLASS ########################################
+class InductiveElement(Branch):
+    def __init__(self, nodes: Optional[tuple[Node]] = None):
+        super().__init__(nodes)
+        
+    def calculate_energy(self):
+        pass
+######################################## INDUCTIVE ELEMENT CLASS ########################################
+
+######################################## INDUCTOR CLASS ########################################
+class Inductor(InductiveElement):
+    def __init__(self, inductance: float, nodes: Optional[tuple[Node]] = None):
+        super().__init__(nodes)
+        self.L = inductance
+        
+    def calculate_energy(self, branch_flux: float, branch_flux_offset: float):
+        return ((branch_flux - branch_flux_offset)**2) / (2 * self.L)
+######################################## INDUCTOR CLASS ########################################
+
+######################################## JOSEPHSON ELEMENT CLASS ########################################
+class JosephsonElement(InductiveElement):
+    def __init__(self, josephson_energy: float, nodes: Optional[tuple[Node]] = None):
+        super().__init__(nodes)
+        self.EJ = josephson_energy
+        
+    def calculate_energy(self, branch_flux: float, branch_flux_offset: float):
+        return -self.EJ * np.cos( (branch_flux - branch_flux_offset) / PHI_0)
+######################################## JOSEPHSON ELEMENT CLASS ########################################
+
+######################################## GRAPH CLASS ########################################
+class Graph:
+    def __init__(self, vertices: list[Node], edges: list[Branch]):
+        self.vertices = vertices
+        self.edges = edges
+######################################## GRAPH CLASS ########################################
+
+
 ================ Circuit.py ================
 ###############################################################################
 #
@@ -9,7 +101,7 @@
 ###############################################################################
 
 import numpy as np
-from Elements import *
+from Branch import *
 
 ###############################################################################
 #
@@ -269,98 +361,6 @@ PHI_0 = hbar / (2 * e)    # reduced flux quantum, for dimensionless phase
 FLUX_QUANTUM = h / (2 * e) # physical flux quantum, for SFQ kick angle
 
 
-================ Elements.py ================
-from __future__ import annotations
-from typing import Optional
-import numpy as np
-from constants import PHI_0
-
-######################################## NODE CLASS ########################################
-class Node:
-    def __init__(self, label: str, branches: Optional[list[Branch]] = None):
-        # e.g. "a", "b", etc.
-        self.label = label
-        # e.g [capacitor1, inductor1, JJ1, ...]
-        self.branches = branches if branches is not None else []
-
-    def _get_degree(self):
-        # number of connected capacitive branches
-        capacitive_degree = 0
-        # number of connected inductive branches
-        inductive_degree = 0
-        
-        for branch in self.branches:
-            if isinstance(branch, CapacitiveElement):
-                capacitive_degree += 1
-            if isinstance(branch, InductiveElement):
-                inductive_degree += 1
-                
-        return capacitive_degree, inductive_degree    
-######################################## NODE CLASS ######################################## 
-
-######################################## BRANCH CLASS ########################################
-# A BRANCH IS AN ELEMENT, TWO NODES CAN BE CONNECTED BY MULTIPLE BRANCHES
-class Branch:
-    def __init__(self, nodes: Optional[tuple[Node]] = None):
-        self.nodes = nodes
-        
-    def calculate_energy(self):
-        pass
-######################################## BRANCH CLASS ########################################
-
-######################################## CAPACITIVE ELEMENT CLASS ########################################
-class CapacitiveElement(Branch):
-    def __init__(self, capacitance: float, nodes: Optional[tuple[Node]] = None):
-        super().__init__(nodes)
-        self.C = capacitance
-        
-    def calculate_energy(self, branch_charge: float, branch_charge_offset: float):
-        return ((branch_charge - branch_charge_offset)**2) / (2 * self.C)
-######################################## CAPACITIVE ELEMENT CLASS ########################################
-        
-######################################## CAPACITOR  CLASS ########################################
-class Capacitor(CapacitiveElement):
-    def __init__(self, capacitance: float, nodes: Optional[tuple[Node]] = None):
-        super().__init__(capacitance, nodes)
-######################################## CAPACITOR ELEMENT CLASS ########################################
-
-######################################## INDUCTIVE ELEMENT CLASS ########################################
-class InductiveElement(Branch):
-    def __init__(self, nodes: Optional[tuple[Node]] = None):
-        super().__init__(nodes)
-        
-    def calculate_energy(self):
-        pass
-######################################## INDUCTIVE ELEMENT CLASS ########################################
-
-######################################## INDUCTOR CLASS ########################################
-class Inductor(InductiveElement):
-    def __init__(self, inductance: float, nodes: Optional[tuple[Node]] = None):
-        super().__init__(nodes)
-        self.L = inductance
-        
-    def calculate_energy(self, branch_flux: float, branch_flux_offset: float):
-        return ((branch_flux - branch_flux_offset)**2) / (2 * self.L)
-######################################## INDUCTOR CLASS ########################################
-
-######################################## JOSEPHSON ELEMENT CLASS ########################################
-class JosephsonElement(InductiveElement):
-    def __init__(self, josephson_energy: float, nodes: Optional[tuple[Node]] = None):
-        super().__init__(nodes)
-        self.EJ = josephson_energy
-        
-    def calculate_energy(self, branch_flux: float, branch_flux_offset: float):
-        return -self.EJ * np.cos( (branch_flux - branch_flux_offset) / PHI_0)
-######################################## JOSEPHSON ELEMENT CLASS ########################################
-
-######################################## GRAPH CLASS ########################################
-class Graph:
-    def __init__(self, vertices: list[Node], edges: list[Branch]):
-        self.vertices = vertices
-        self.edges = edges
-######################################## GRAPH CLASS ########################################
-
-
 ================ fidelity.py ================
 import numpy as np
 from Operator import Operator
@@ -550,15 +550,6 @@ from utils import create_upper_lower
 
 def quantize(circuit: Circuit, n_cut: int):
     """
-    1) Builds charge operator                     (charge basis + Fock basis)
-    2) Builds creation and annihilation operators (Fock basis)
-    3) Builds kinetic energy operator             (charge basis)
-    4) Builds potential energy operator           (charge basis)
-    5) Builds unperturbed Hamiltonian operator    (charge basis + Fock basis)
-    6) Diagonalizes unperturbed Hamiltonian       (charge basis)
-    7) Calculate anharmonicity, qubit frequency, 
-        and qubit angular frequency
-
     Parameters
     ----------
     circuit : Circuit
@@ -566,18 +557,15 @@ def quantize(circuit: Circuit, n_cut: int):
     n_cut : int
         Hilbert-space truncation: Cooper-pair numbers run from -n_cut to +n_cut
         (charge basis), or Fock states 0..n_cut-1 (Fock basis).
-
-    Returns
-    -------
-    QuantizationResult
     """
-    coupling_matrix = e**2 / (2 * circuit.capacitance_matrix)
+    EC_matrix = e**2 / (2 * circuit.capacitance_matrix)
     
     annihilation, creation  = QuantumOscillator.create_ladder_operators(n_cut=n_cut)
     
-    if len(circuit.josephson_elements) > 0:
-        EJ    = np.array([josephson_element.EJ for josephson_element in circuit.josephson_elements])
-        EJ_EC = EJ / coupling_matrix
+    for k in range(len(circuit.josephson_elements)):
+        EJ    = circuit.josephson_elements[k]
+        EC    = EC_matrix[k][k]
+        EJ_EC = EJ / EC
         
         # Charge operator
         n = Operator(
@@ -1191,6 +1179,74 @@ class System():
                 new_pos = (n - i) % n
                 flipped[new_pos] = '1'
         return ''.join(flipped)
+
+
+================ Transmon.py ================
+import numpy as np
+from typing import Optional
+
+from QuantumOscillator import QuantumOscillator
+from Operator import Operator
+from constants import *   
+from utils import *
+        
+class Transmon(QuantumOscillator):
+    """
+    A Transmon system
+    """
+    def __init__(self, EC: float, EJ_EC: float, n_cut: int):
+        self.EC = EC                       # Charging energy
+        self.EJ = EJ_EC * self.EC          # Josephson energy
+        self.r  = (1/2)*(EJ_EC / 2)**(1/4) # charge zero-point-fluctuation
+        
+        # Charge operator
+        self.n = Operator(
+            basis_to_matrix={"charge" : np.diag([n for n in range(int(-(n_cut-1)/2), int((n_cut-1)/2) + 1)])}
+        )   
+        
+        # Kinetic energy operator
+        self.T = Operator(
+            basis_to_matrix={"charge" : 4*EC*(self.n["charge"]**2)}
+        ) 
+        
+        # Potential energy operator
+        self.V = Operator(
+            basis_to_matrix={"charge" : create_upper_lower(value=-self.EJ / 2, dim=n_cut)}
+        ) 
+        
+        # Unperturbed Hamiltonian operator
+        self.H0 = Operator(
+            basis_to_matrix={"charge" : self.T["charge"] + self.V["charge"]}
+            ) 
+    
+        # Diagonalize the Hamiltonian in the charge basis to get energy eigenvalues/eigenvectors
+        energies, energy_states = np.linalg.eigh(self.H0["charge"])
+        energy_states           = energy_states.astype(complex)
+    
+        # Unperturbed Hamiltonian operator in the energy basis
+        self.H0["energy"] = np.diag(energies)
+
+        self.anharmonicity           = (energies[2] - energies[1]) - (energies[1] - energies[0])
+        self.qubit_frequency         = (energies[1] - energies[0]) / h 
+        self.qubit_angular_frequency = self.qubit_frequency * (2*np.pi)
+    
+        # NOTE: I need to understand this better, Claude gave me this fix and I don't know why it works
+        # Fix eigenvector phases so that <psi_i|n|psi_{i+1}> is negative imaginary
+        for i in range(len(energies) - 1):
+            element = energy_states[:, i].conj() @ self.n["charge"] @ energy_states[:, i + 1]
+            if np.abs(element) > 1e-12:
+                phase = -1j * element / np.abs(element)
+                energy_states[:, i + 1] = phase * energy_states[:, i + 1]
+            
+        # Get n in the energy basis
+        self.n["energy"] = energy_states.conj().T @ self.n["charge"] @ energy_states
+                        
+        
+            
+        
+    
+    
+    
 
 
 ================ utils.py ================
