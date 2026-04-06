@@ -540,112 +540,37 @@ if __name__=="__main__":
 #
 ###############################################################################
 
-
-import numpy as np
 from constants import *
+from Transmon import Transmon
 from Circuit import Circuit
-from Operator import Operator
-from QuantumOscillator import QuantumOscillator
-from utils import create_upper_lower
 
-def quantize(circuit: Circuit, n_cut: int):
+
+def quantize(circuit: Circuit, n: int):
     """
     Parameters
     ----------
     circuit : Circuit
         A fully constructed Circuit object.
-    n_cut : int
-        Hilbert-space truncation: Cooper-pair numbers run from -n_cut to +n_cut
+    n : int
+        Hilbert-space dimension: Cooper-pair numbers run from -n to +n
         (charge basis), or Fock states 0..n_cut-1 (Fock basis).
     """
     EC_matrix = e**2 / (2 * circuit.capacitance_matrix)
     
-    annihilation, creation  = QuantumOscillator.create_ladder_operators(n_cut=n_cut)
+    transmons = []
     
     for k in range(len(circuit.josephson_elements)):
-        EJ    = circuit.josephson_elements[k]
+        EJ    = circuit.josephson_elements[k].EJ
         EC    = EC_matrix[k][k]
         EJ_EC = EJ / EC
         
-        # Charge operator
-        n = Operator(
-            basis_to_matrix={"charge" : np.diag([n for n in range(int(-(n_cut-1)/2), int((n_cut-1)/2) + 1)])}
-        )    
+        transmons.append(Transmon(
+            EC=EC,
+            EJ_EC=EJ_EC,
+            n=n
+        ))
         
-        n_zpf = (1/2)*(EJ_EC / 2)**(1/4)
-    
-        # Kinetic energy operator
-        T = Operator(
-            basis_to_matrix={"charge" : 4*EC*(n["charge"]**2)}
-        ) 
-    
-        # Potential energy operator
-        V = Operator(
-            basis_to_matrix={"charge" : create_upper_lower(value=-EJ / 2, dim=n_cut)}
-        ) 
-    
-        # Unperturbed Hamiltonian operator
-        H0 = Operator(
-            basis_to_matrix={"charge" : T["charge"] + V["charge"]}
-            ) 
-    
-        # Diagonalize the Hamiltonian in the charge basis to get energy eigenvalues/eigenvectors
-        energies, energy_states = np.linalg.eigh(H0["charge"])
-        energy_states = energy_states.astype(complex)
-    
-        # Unperturbed Hamiltonian operator in the energy basis
-        H0["energy"] = np.diag(energies)
-
-        anharmonicity           = (energies[2] - energies[1]) - (energies[1] - energies[0])
-        qubit_frequency         = (energies[1] - energies[0]) / h 
-        qubit_angular_frequency = qubit_frequency * (2*np.pi)
-    
-        # NOTE: I need to understand this better, Claude gave me this fix and I don't know why it works
-        # Fix eigenvector phases so that <psi_i|n|psi_{i+1}> is negative imaginary
-        for i in range(len(energies) - 1):
-            element = energy_states[:, i].conj() @ n["charge"] @ energy_states[:, i + 1]
-            if np.abs(element) > 1e-12:
-                phase = -1j * element / np.abs(element)
-                energy_states[:, i + 1] = phase * energy_states[:, i + 1]
-            
-        # Get n in the energy basis
-        n["energy"] = energy_states.conj().T @ n["charge"] @ energy_states
-        
-    else:
-        qubit_angular_frequency = np.sqrt(circuit.omega_squared[0][0])
-        
-        # Number operator
-        N = Operator(
-            basis_to_matrix={"fock" : creation["fock"] @ annihilation["fock"]}
-        )
-        
-        n_zpf = (1 / (2*e)) * np.sqrt(hbar * qubit_angular_frequency * C_T / 2)
-        
-        # Charge operator
-        n = Operator(
-            basis_to_matrix={"fock" : 1j * n_zpf * (creation["fock"] - annihilation["fock"])}
-        )
-        
-        # Unperturbed Hamiltonian operator
-        H0 = Operator(
-            basis_to_matrix={"fock": hbar*qubit_angular_frequency*(N["fock"]+(0.5*np.eye(n_cut)))}
-        )
-        
-        # Diagonalize the Hamiltonian in the fock basis to get energy eigenvalues/eigenvectors
-        energies, energy_states = np.linalg.eigh(H0["fock"])
-        energy_states = energy_states.astype(complex)
-        
-        # Unperturbed Hamiltonian operator in the energy basis (same as in fock basis)
-        H0["energy"] = np.diag(energies)
-        
-        anharmonicity           = (energies[2] - energies[1]) - (energies[1] - energies[0])
-        qubit_frequency         = (energies[1] - energies[0]) / h 
-        qubit_angular_frequency = qubit_frequency * (2*np.pi)
-        
-        # Get n in the energy basis (same as in fock basis)
-        n["energy"] = energy_states.conj().T @ n["fock"] @ energy_states
-
-    return n, n_zpf, creation, annihilation, H0, energies, energy_states, anharmonicity, qubit_frequency, qubit_angular_frequency
+    return transmons, EC_matrix
 
 
 
@@ -835,26 +760,31 @@ PLOT = True
 
 def main():
     # ---- Shared Hyper-parameters ----
-    n_cut              = 201            # Number of charge states, -n_cut : n_cut
-    n_proj             = 201              # number of states to truncate to
+    n                  = 101            # Number of charge states, -n/2 : n/2 for each transmon
+    n_trunc            = 5              # number of states to truncate to for each transmon
+    n_full             = n_trunc * 3
     clock_multiplier   = 8
     ramp               = ['01000000', '11000000', '10000000', '00000000', '00000000']
     
     # ---- Transmon Circuit Hyper-parameters ----
     EJ_EC = 69
     EC    = h * 250 * 1e6   # Charging energy [J]
-    THETA = 0.03
+    THETAS = np.array([0.03])
     
     # ---- Derived Physical Constants ----
     EJ    = EJ_EC * EC
     n_zpf = (1/2) * (EJ_EC / 2)**(1/4) # approximation
-    BETA  = THETA / (2 * n_zpf)        # approximation
+    BETAS  = THETAS / (2 * n_zpf)        # approximation
     C_T   = e**2 / (2 * EC)
-    CC    = (BETA * hbar * C_T) / FLUX_QUANTUM
+    CC    = (BETAS[0] * hbar * C_T) / FLUX_QUANTUM
     C     = C_T - CC
     
+    C  = 7.748091729863649e-14
+    CC = 4.891271340097761e-35
+    EJ = 1.142997100875e-23
+    
     # ---- Graph Representation of the Transmon Circuit ----
-    transmon_graph_rep = {
+    graph_rep = {
         'nodes': ['a'],
         'capacitors': [
             ('a', 'gnd', C),  # Shunt capacitor
@@ -867,36 +797,20 @@ def main():
         'external_flux': {}
     }
     
-    # ---- Harmonic Oscillator LC Circuit Hyper-parameters ----
-    C          = 100e-15 # [F]
-    L          = 10e-9   # [H]
     
-    # ---- Graph Representation of the LC Circuit ----
-    LC_graph_rep = {
-        'nodes': ['a'],
-        'capacitors': [
-            ('a', 'gnd', C),  # Shunt + Coupling Capacitance
-        ],
-        'inductors': [
-            ('a', 'gnd', L)
-            ],
-        'josephson_elements': [],
-        'external_flux': {}
-    }
+    circuit = Circuit(graph_rep=graph_rep)
     
-    circuit = Circuit(graph_rep=LC_graph_rep)
-    
-    n, n_zpf, creation, annihilation, H0, energies, energy_states, alpha, f_q, omega_q = quantize(circuit=circuit, n_cut=n_cut)
-    
-    print(f"n['energy'][:2,:2]: ") 
-    print(n["energy"][:2,:2])
-    print(f"n Hermitian = {np.allclose(n["energy"], n["energy"].conj().T)}")
-    print(f"n Unitary = {np.allclose(np.eye(len(n["energy"])), n["energy"] @ n["energy"].conj().T)}")
-    
+    transmons, EC_matrix = quantize(circuit=circuit, n=n)
+        
+    for k in range(len(transmons)):
+        print(f"n['energy'][:2,:2]: ") 
+        print(transmons[k].n["energy"][:2,:2])
+        print(f"n Hermitian = {np.allclose(transmons[k].n["energy"], transmons[k].n["energy"].conj().T)}")
+        print(f"n Unitary = {np.allclose(np.eye(len(transmons[k].n["energy"])), transmons[k].n["energy"] @ transmons[k].n["energy"].conj().T)}")
     
     # ---- Create Quantum States |0>, |1>, and the projector onto the computational subspace H_2 ----
-    zero_state = Wavefunction(basis_to_coefs={"energy" : np.array([1] + (n_proj - 1) * [0])})
-    one_state  = Wavefunction(basis_to_coefs={"energy" : np.array([0] + [1] + (n_proj - 2) * [0])})
+    zero_state = Wavefunction(basis_to_coefs={"energy" : np.array([1] + (n_full - 1) * [0])})
+    one_state  = Wavefunction(basis_to_coefs={"energy" : np.array([0] + [1] + (n_full - 2) * [0])})
     
     P_Q = Operator(
         basis_to_matrix={"energy": np.outer(to_ket(zero_state["energy"]), to_bra(zero_state["energy"])) + np.outer(to_ket(one_state["energy"]), to_bra(one_state["energy"]))}
@@ -904,8 +818,6 @@ def main():
     
     # ---- Creating Our Initial Quantum State in Energy/Fock Basis, |0> ----
     initial_state = Wavefunction(basis_to_coefs={"energy" : zero_state["energy"].copy()})
-
-    populations = [[] for i in range(n_cut)] # to store measurement probabilities
     
     if PLOT:
         plt.ion()
@@ -929,20 +841,18 @@ def main():
     theta_target = np.pi/2
     
     # Number of kicks in pulse train
-    N = 47
+    N_kicks = 47
     # N = int(np.round(theta_target / theta))
     
     system = System(
-        energy_states=energy_states,
-        n=n,
-        n_zpf=n_zpf,
-        theta=THETA,
-        H0=H0,
-        qubit_angular_frequency=omega_q,
+        transmons=transmons,
+        EC_matrix=EC_matrix,
+        thetas=THETAS,
         clock_multiplier=clock_multiplier,
         initial_state=initial_state,
-        N=N,
-        ramp=ramp
+        ramp=ramp,
+        N_kicks=N_kicks,
+        flux_schedule=[]
     )
     
     RY_TARGET = Operator(
@@ -955,7 +865,7 @@ def main():
     for i in range(100):
         system.state.reset_accumulated_unitary() 
         
-        system.RY()
+        system.RY(k=0)
         U = system.state.get_accumulated_unitary()
 
         U_Q_full = Operator(
@@ -980,8 +890,6 @@ def main():
         
         probabilities = system.state.get_probabilities("energy")
         
-        for idx, p in enumerate(probabilities):
-            populations[idx].append(p)
         
         if PLOT:
             state_azimuth, state_inclination = get_spherical_coords(alpha=system.state["energy"][0],
@@ -1069,8 +977,8 @@ def main():
             
             # ---- Fock Populations ----
             ax_fock.cla()
-            ax_fock.bar(np.arange(n_proj), probabilities, color='steelblue')
-            ax_fock.set_xlim(-0.5, n_proj - 0.5)
+            ax_fock.bar(np.arange(n_full), probabilities, color='steelblue')
+            ax_fock.set_xlim(-0.5, n_full - 0.5)
             ax_fock.set_ylim(0, 1)
             ax_fock.set_xlabel("Energy (Or Fock) State |n⟩", fontsize=12)
             ax_fock.set_ylabel("Probability", fontsize=12)
@@ -1096,29 +1004,113 @@ if __name__=="__main__":
 from __future__ import annotations
 import numpy as np
 from scipy.linalg import expm
+import copy
 
+from Transmon import Transmon
 from Operator import Operator
 from Wavefunction import Wavefunction
 from constants import *
 
 class System():
-    def __init__(self, energy_states: np.ndarray, n: Operator, n_zpf: float, theta: float, H0: Operator, qubit_angular_frequency: float, clock_multiplier: int, initial_state: Wavefunction, N: int, ramp: list[str]):
-        self.theta   = theta
-        self.H0      = H0
-        self.omega_q = qubit_angular_frequency
-        self.M       = clock_multiplier
-        self.state   = initial_state
-        self.N       = N
-        self.ramp    = ramp
+    def __init__(self, transmons: list[Transmon], EC_matrix: np.ndarray, thetas: np.ndarray, clock_multiplier: int, initial_state: Wavefunction, ramp: list[str], N_kicks: int, flux_schedule: np.ndarray):
+        self.transmons     = transmons
+        self.EC_matrix     = EC_matrix
+        self.thetas        = thetas
+        self.M             = clock_multiplier
+        self.state         = initial_state  
+        self.ramp          = ramp
+        self.N_kicks       = N_kicks
+        self.flux_schedule = flux_schedule
         
-        self.T_q     = (2*np.pi) / qubit_angular_frequency # Qubit period [s]
-        self.T_c     = self.T_q / self.M                   # Clock period [s]
+        self.n_full        = len(self.state["energy"]) # Dimension of full Hilbert space of the system
+        self.n_trunc       = int(round(self.n_full**(1/len(self.transmons))))
+        
+        # ---- Create Projectors for each individual qubit subspace ----
+        
+        # self.projectors = [
+        #     System.create_projector(
+        #         bases=["energy"], 
+        #         n_trunc=self.n_trunc,
+        #         ind=k,
+        #         num_subsystems=len(self.transmons)
+        #         )
+        #     for k in range(len(self.transmons))
+        #     ]
+        
+        
+        # ---- Truncate each transmon to n_trunc x n_trunc, then upgrade it to the n_full state space
+        self.sys_transmons = self.sys_transmons = copy.deepcopy(self.transmons)
+        
+        for k in range(len(self.transmons)):
+            og_transmon  = self.transmons[k]
+            sys_transmon = self.sys_transmons[k]
+            
+            for label, operator in og_transmon.operators.items():
+                sys_transmon.operators[label] = System.upgrade(
+                                operator=System.truncate(
+                                    operator=operator,
+                                    n_trunc=self.n_trunc
+                                ),
+                                n_trunc=self.n_trunc,
+                                idx=k,
+                                num_subsystems=len(self.transmons)
+                            )
+        
+        # ---- Derive Qubit and Clock Periods ----
+        self.T_q           = np.array([(2*np.pi) / t.qubit_angular_frequency for t in self.transmons]) # Qubit period [s]
+        # We assume our computational qubits share the same angular frequency s.t. the clock period is well-defined
+        self.T_c           = self.T_q[0] / self.M                                                      # Clock period [s]
+        
+        # ---- Derive Kick Operators for Logical Qubits 1 (and 2)
+        self.transmon_to_kick = {}
+        
+        self.transmon_to_kick[0] = Operator(
+                    basis_to_matrix={"energy": expm(-1j * (thetas[0] / self.sys_transmons[0].r) / 2 * self.transmons[0].n["energy"])}
+                )
+        self.transmon_to_kick[0] = System.truncate(
+            operator=self.transmon_to_kick[0],
+            n_trunc=self.n_trunc
+        )
+        self.transmon_to_kick[0] = System.upgrade(
+            operator=self.transmon_to_kick[0],
+            n_trunc=self.n_trunc,
+            idx=0,
+            num_subsystems=len(self.transmons)
+        )
+        
+        if len(self.transmons) > 1:
+            self.transmon_to_kick[2] = Operator(
+                        basis_to_matrix={"energy": expm(-1j * (thetas[1] / self.transmons[2].r) / 2 * self.transmons[2].n["energy"])}
+                    )
+            self.transmon_to_kick[2] = System.truncate(
+                operator=self.transmon_to_kick[2],
+                n_trunc=self.n_trunc
+            )
+            self.transmon_to_kick[2] = System.upgrade(
+                operator=self.transmon_to_kick[2],
+                n_trunc=self.n_trunc,
+                idx=2,
+                num_sub_systems=len(self.transmons)
+            )
+        
+        # ---- Derive Coupling Hamiltonain HC ----
+        coupling_sum = 0
+        for k in range(len(self.transmons)):
+            for l in range(len(self.transmons)):
+                if k == l:
+                    continue
+                else:   
+                    coupling_sum += (self.sys_transmons[k].n["energy"] * self.EC_matrix[k][l] * self.sys_transmons[l].n["energy"])
                 
-        self.U_kick = Operator(
-            basis_to_matrix={"energy": expm(-1j * (theta / n_zpf) / 2 * n["energy"])}
+        self.HC = Operator(
+            basis_to_matrix={"energy" : 4 * coupling_sum}
+        )
+        
+        # ---- Derive the Unperturbed Hamiltonian H0 ----
+        self.H0 = Operator(
+            basis_to_matrix={"energy" : np.sum([t.H0["energy"] for t in self.sys_transmons]) + self.HC["energy"]}
         )
                 
-        
     def free_evolve(self, clock_cycles: int):
         self.state.apply(
             operator=Operator(
@@ -1126,22 +1118,20 @@ class System():
                 )
             )
 
-    def RY(self):
+    def RY(self, k: int):
         
-        N = self.N
-        
-        self.on_ramp_evolve()
+        self.on_ramp_evolve(k)
                 
-        for _ in range(N):
-            self.state.apply(self.U_kick)
+        for _ in range(self.N_kicks):
+            self.state.apply(self.transmon_to_kick[k]["energy"])
             
             self.free_evolve(
                 clock_cycles=self.M,
             )
         
-        self.off_ramp_evolve()
+        self.off_ramp_evolve(k)
             
-    def on_ramp_evolve(self):
+    def on_ramp_evolve(self, k: int):
     
         for sequence in self.ramp:
             for action in sequence:
@@ -1150,12 +1140,12 @@ class System():
                     self.free_evolve(clock_cycles=1)
                 else:
                     # kick
-                    self.state.apply(self.U_kick)
+                    self.state.apply(self.transmon_to_kick[k]["energy"])
 
                     # free evolve for a single clock cycle
                     self.free_evolve(clock_cycles=1)
 
-    def off_ramp_evolve(self):
+    def off_ramp_evolve(self, k: int):
         flipped_ramps = [self.flip_X_ramp(r) for r in self.ramp][::-1]
         
         for sequence in flipped_ramps:
@@ -1165,7 +1155,7 @@ class System():
                     self.free_evolve(clock_cycles=1)
                 else:
                     # kick
-                    self.state.apply(self.U_kick)
+                    self.state.apply(self.transmon_to_kick[k]["energy"])
 
                     # free evolve for a single clock cycle
                     self.free_evolve(clock_cycles=1)
@@ -1179,6 +1169,51 @@ class System():
                 new_pos = (n - i) % n
                 flipped[new_pos] = '1'
         return ''.join(flipped)
+    
+    @staticmethod
+    def truncate(operator: Operator, n_trunc: int):
+        truncated_basis_to_matrix = {}
+        
+        for basis, matrix in operator.basis_to_matrix.items():
+            truncated_basis_to_matrix[basis] = matrix[:n_trunc, :n_trunc]
+        
+        return Operator(truncated_basis_to_matrix)
+    
+    @staticmethod
+    def upgrade(operator: Operator, n_trunc: int, idx: int, num_subsystems: int):
+        upgraded_basis_to_matrix = {}
+        
+        for basis, matrix in operator.basis_to_matrix.items():
+            upgraded_matrix = 1.0
+            
+            for k in range(num_subsystems): 
+                if k == idx:
+                    upgraded_matrix = np.kron(upgraded_matrix, matrix)
+                else:
+                    upgraded_matrix = np.kron(upgraded_matrix, np.eye(n_trunc))
+                    
+            upgraded_basis_to_matrix[basis] = upgraded_matrix
+                
+        return Operator(upgraded_basis_to_matrix)
+    
+    # NOTE: THIS IS WRONG 
+    # @staticmethod
+    # def create_projector(bases: list[str], n_trunc: int, idx: int, num_subsystems: int):
+    #     projected_basis_to_matrix = {}
+        
+    #     for basis in bases:
+    #         p = 1.0
+            
+    #         for k in range(num_subsystems): 
+    #             if k == idx:
+    #                 upgraded_matrix = np.kron(p, np.eye(n_trunc))
+    #             else:
+    #                 upgraded_matrix = np.kron(upgraded_matrix, np.zeros((n_trunc, n_trunc)))
+                    
+    #         projected_basis_to_matrix[basis] = p
+                
+    #     return Operator(projected_basis_to_matrix)
+        
 
 
 ================ Transmon.py ================
@@ -1194,14 +1229,14 @@ class Transmon(QuantumOscillator):
     """
     A Transmon system
     """
-    def __init__(self, EC: float, EJ_EC: float, n_cut: int):
+    def __init__(self, EC: float, EJ_EC: float, n: int):
         self.EC = EC                       # Charging energy
         self.EJ = EJ_EC * self.EC          # Josephson energy
         self.r  = (1/2)*(EJ_EC / 2)**(1/4) # charge zero-point-fluctuation
         
         # Charge operator
         self.n = Operator(
-            basis_to_matrix={"charge" : np.diag([n for n in range(int(-(n_cut-1)/2), int((n_cut-1)/2) + 1)])}
+            basis_to_matrix={"charge" : np.diag([n for n in range(int(-(n-1)/2), int((n-1)/2) + 1)])}
         )   
         
         # Kinetic energy operator
@@ -1211,7 +1246,7 @@ class Transmon(QuantumOscillator):
         
         # Potential energy operator
         self.V = Operator(
-            basis_to_matrix={"charge" : create_upper_lower(value=-self.EJ / 2, dim=n_cut)}
+            basis_to_matrix={"charge" : create_upper_lower(value=-self.EJ / 2, dim=n)}
         ) 
         
         # Unperturbed Hamiltonian operator
@@ -1240,6 +1275,13 @@ class Transmon(QuantumOscillator):
             
         # Get n in the energy basis
         self.n["energy"] = energy_states.conj().T @ self.n["charge"] @ energy_states
+        
+        self.operators = {
+            "n" : self.n,
+            "T" : self.T,
+            "V" : self.V,
+            "H0": self.H0,
+        }
                         
         
             
@@ -1378,9 +1420,8 @@ class Wavefunction():
     def apply(self, operator: Operator):        
         # Apply the operator to each basis representation of the wavefunction
         for basis, coefs in self.basis_to_coefs.items():
-            n_proj = len(coefs)
-            self.basis_to_coefs[basis] = (operator[basis][:n_proj, :n_proj] @ coefs.reshape(-1, 1)).flatten()
-            self.U[basis] = operator[basis][:n_proj, :n_proj] @ self.U[basis]
+            self.basis_to_coefs[basis] = (operator[basis] @ coefs.reshape(-1, 1)).flatten()
+            self.U[basis] = operator[basis] @ self.U[basis]
         
     def get_accumulated_unitary(self):
         return self.U

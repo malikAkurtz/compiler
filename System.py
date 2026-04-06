@@ -1,6 +1,7 @@
 from __future__ import annotations
 import numpy as np
 from scipy.linalg import expm
+import copy
 
 from Transmon import Transmon
 from Operator import Operator
@@ -18,6 +19,37 @@ class System():
         self.N_kicks       = N_kicks
         self.flux_schedule = flux_schedule
         
+        self.n_full        = len(self.state["energy"]) # Dimension of full Hilbert space of the system
+        self.n_trunc       = int(round(self.n_full**(1/len(self.transmons))))
+        
+        # ---- Create Projectors for each individual qubit subspace ----
+        
+        # self.projectors = [
+        #     System.create_projector(
+        #         bases=["energy"], 
+        #         n_trunc=self.n_trunc,
+        #         ind=k,
+        #         num_subsystems=len(self.transmons)
+        #         )
+        #     for k in range(len(self.transmons))
+        #     ]
+        
+        
+        # ---- Truncate each transmon to n_trunc x n_trunc, then upgrade it to the n_full state space
+        self.sys_transmons = self.sys_transmons = copy.deepcopy(self.transmons)
+        
+        for k in range(len(self.transmons)):
+            sys_transmon = self.sys_transmons[k]
+            
+            for label in list(sys_transmon.operators.keys()):
+                
+                sys_transmon.operators[label] = System.upgrade(
+                    operator=System.truncate(sys_transmon.operators[label], self.n_trunc),
+                    n_trunc=self.n_trunc,
+                    idx=k,
+                    num_subsystems=len(self.transmons)
+                )
+        
         # ---- Derive Qubit and Clock Periods ----
         self.T_q           = np.array([(2*np.pi) / t.qubit_angular_frequency for t in self.transmons]) # Qubit period [s]
         # We assume our computational qubits share the same angular frequency s.t. the clock period is well-defined
@@ -27,32 +59,58 @@ class System():
         self.transmon_to_kick = {}
         
         self.transmon_to_kick[0] = Operator(
-                basis_to_matrix={"energy": expm(-1j * (thetas[0] / self.transmons[0].r) / 2 * self.transmons[0].n["energy"])}
-            )
+                    basis_to_matrix={"energy": expm(-1j * (thetas[0] / self.sys_transmons[0].r) / 2 * self.transmons[0].n["energy"])}
+                )
+        self.transmon_to_kick[0] = System.truncate(
+            operator=self.transmon_to_kick[0],
+            n_trunc=self.n_trunc
+        )
+        self.transmon_to_kick[0] = System.upgrade(
+            operator=self.transmon_to_kick[0],
+            n_trunc=self.n_trunc,
+            idx=0,
+            num_subsystems=len(self.transmons)
+        )
         
-        if len(transmons) > 0:
+        if len(self.transmons) > 1:
             self.transmon_to_kick[2] = Operator(
-                basis_to_matrix={"energy": expm(-1j * (thetas[1] / self.transmons[2].r) / 2 * self.transmons[2].n["energy"])}
+                        basis_to_matrix={"energy": expm(-1j * (thetas[1] / self.transmons[2].r) / 2 * self.transmons[2].n["energy"])}
+                    )
+            self.transmon_to_kick[2] = System.truncate(
+                operator=self.transmon_to_kick[2],
+                n_trunc=self.n_trunc
+            )
+            self.transmon_to_kick[2] = System.upgrade(
+                operator=self.transmon_to_kick[2],
+                n_trunc=self.n_trunc,
+                idx=2,
+                num_sub_systems=len(self.transmons)
             )
         
         # ---- Derive Coupling Hamiltonain HC ----
         coupling_sum = 0
-        for k in range(len(transmons)):
-            for l in range(len(transmons)):
+        for k in range(len(self.transmons)):
+            for l in range(len(self.transmons)):
                 if k == l:
                     continue
-                else:
-                    coupling_sum += (self.transmons[k].n * self.EC_matrix[k][l] * self.transmons[l].n)
+                else:   
+                    coupling_sum += (self.sys_transmons[k].operators["n"]["energy"] * self.EC_matrix[k][l] * self.sys_transmons[l].operators["n"]["energy"])
                 
         self.HC = Operator(
             basis_to_matrix={"energy" : 4 * coupling_sum}
         )
         
         # ---- Derive the Unperturbed Hamiltonian H0 ----
+        total_h0 = self.sys_transmons[0].operators["H0"]["energy"]
+        for t in self.sys_transmons[1:]:
+            total_h0 = total_h0 + t.operators["H0"]["energy"]
+
         self.H0 = Operator(
-            basis_to_matrix={"energy" : np.sum([t.H0 for t in self.transmons]) + self.HC["energy"]}
+            basis_to_matrix={"energy": total_h0 + self.HC["energy"]}
         )
-                
+        
+        print(self.H0["energy"])
+        
     def free_evolve(self, clock_cycles: int):
         self.state.apply(
             operator=Operator(
@@ -60,22 +118,20 @@ class System():
                 )
             )
 
-    def RY(self, qubit: int):
+    def RY(self, k: int):
         
-        N = self.N
-        
-        self.on_ramp_evolve()
+        self.on_ramp_evolve(k)
                 
-        for _ in range(N):
-            self.state.apply(self.U_kick)
+        for _ in range(self.N_kicks):
+            self.state.apply(self.transmon_to_kick[k])
             
             self.free_evolve(
                 clock_cycles=self.M,
             )
         
-        self.off_ramp_evolve()
+        self.off_ramp_evolve(k)
             
-    def on_ramp_evolve(self):
+    def on_ramp_evolve(self, k: int):
     
         for sequence in self.ramp:
             for action in sequence:
@@ -84,12 +140,12 @@ class System():
                     self.free_evolve(clock_cycles=1)
                 else:
                     # kick
-                    self.state.apply(self.U_kick)
+                    self.state.apply(self.transmon_to_kick[k])
 
                     # free evolve for a single clock cycle
                     self.free_evolve(clock_cycles=1)
 
-    def off_ramp_evolve(self):
+    def off_ramp_evolve(self, k: int):
         flipped_ramps = [self.flip_X_ramp(r) for r in self.ramp][::-1]
         
         for sequence in flipped_ramps:
@@ -99,7 +155,7 @@ class System():
                     self.free_evolve(clock_cycles=1)
                 else:
                     # kick
-                    self.state.apply(self.U_kick)
+                    self.state.apply(self.transmon_to_kick[k])
 
                     # free evolve for a single clock cycle
                     self.free_evolve(clock_cycles=1)
@@ -113,3 +169,48 @@ class System():
                 new_pos = (n - i) % n
                 flipped[new_pos] = '1'
         return ''.join(flipped)
+    
+    @staticmethod
+    def truncate(operator: Operator, n_trunc: int):
+        truncated_basis_to_matrix = {}
+        
+        for basis, matrix in operator.basis_to_matrix.items():
+            truncated_basis_to_matrix[basis] = matrix[:n_trunc, :n_trunc]
+        
+        return Operator(truncated_basis_to_matrix)
+    
+    @staticmethod
+    def upgrade(operator: Operator, n_trunc: int, idx: int, num_subsystems: int):
+        upgraded_basis_to_matrix = {}
+        
+        for basis, matrix in operator.basis_to_matrix.items():
+            upgraded_matrix = 1.0
+            
+            for k in range(num_subsystems): 
+                if k == idx:
+                    upgraded_matrix = np.kron(upgraded_matrix, matrix)
+                else:
+                    upgraded_matrix = np.kron(upgraded_matrix, np.eye(n_trunc))
+                    
+            upgraded_basis_to_matrix[basis] = upgraded_matrix
+                
+        return Operator(upgraded_basis_to_matrix)
+    
+    # NOTE: THIS IS WRONG 
+    # @staticmethod
+    # def create_projector(bases: list[str], n_trunc: int, idx: int, num_subsystems: int):
+    #     projected_basis_to_matrix = {}
+        
+    #     for basis in bases:
+    #         p = 1.0
+            
+    #         for k in range(num_subsystems): 
+    #             if k == idx:
+    #                 upgraded_matrix = np.kron(p, np.eye(n_trunc))
+    #             else:
+    #                 upgraded_matrix = np.kron(upgraded_matrix, np.zeros((n_trunc, n_trunc)))
+                    
+    #         projected_basis_to_matrix[basis] = p
+                
+    #     return Operator(projected_basis_to_matrix)
+        

@@ -16,23 +16,27 @@ PLOT = True
 
 def main():
     # ---- Shared Hyper-parameters ----
-    n_cut              = 201            # Number of charge states, -n_cut : n_cut
-    n_proj             = 201              # number of states to truncate to
+    n                  = 101            # Number of charge states, -n/2 : n/2 for each transmon
+    n_trunc            = 7              # number of states to truncate to for each transmon
     clock_multiplier   = 8
     ramp               = ['01000000', '11000000', '10000000', '00000000', '00000000']
     
     # ---- Transmon Circuit Hyper-parameters ----
     EJ_EC = 69
     EC    = h * 250 * 1e6   # Charging energy [J]
-    THETA = 0.03
+    THETAS = np.array([0.03])
     
     # ---- Derived Physical Constants ----
     EJ    = EJ_EC * EC
     n_zpf = (1/2) * (EJ_EC / 2)**(1/4) # approximation
-    BETA  = THETA / (2 * n_zpf)        # approximation
+    BETAS  = THETAS / (2 * n_zpf)        # approximation
     C_T   = e**2 / (2 * EC)
-    CC    = (BETA * hbar * C_T) / FLUX_QUANTUM
+    CC    = (BETAS[0] * hbar * C_T) / FLUX_QUANTUM
     C     = C_T - CC
+    
+    C  = 7.748091729863649e-14
+    CC = 4.891271340097761e-35
+    EJ = 1.142997100875e-23
     
     # ---- Graph Representation of the Transmon Circuit ----
     graph_rep = {
@@ -51,7 +55,9 @@ def main():
     
     circuit = Circuit(graph_rep=graph_rep)
     
-    transmons, EC_matrix = quantize(circuit=circuit, n_cut=n_cut)
+    transmons, EC_matrix = quantize(circuit=circuit, n=n)
+        
+    n_full = n_trunc ** len(transmons)
     
     for k in range(len(transmons)):
         print(f"n['energy'][:2,:2]: ") 
@@ -59,10 +65,9 @@ def main():
         print(f"n Hermitian = {np.allclose(transmons[k].n["energy"], transmons[k].n["energy"].conj().T)}")
         print(f"n Unitary = {np.allclose(np.eye(len(transmons[k].n["energy"])), transmons[k].n["energy"] @ transmons[k].n["energy"].conj().T)}")
     
-    
     # ---- Create Quantum States |0>, |1>, and the projector onto the computational subspace H_2 ----
-    zero_state = Wavefunction(basis_to_coefs={"energy" : np.array([1] + (n_proj - 1) * [0])})
-    one_state  = Wavefunction(basis_to_coefs={"energy" : np.array([0] + [1] + (n_proj - 2) * [0])})
+    zero_state = Wavefunction(basis_to_coefs={"energy" : np.array([1] + (n_full - 1) * [0])})
+    one_state  = Wavefunction(basis_to_coefs={"energy" : np.array([0] + [1] + (n_full - 2) * [0])})
     
     P_Q = Operator(
         basis_to_matrix={"energy": np.outer(to_ket(zero_state["energy"]), to_bra(zero_state["energy"])) + np.outer(to_ket(one_state["energy"]), to_bra(one_state["energy"]))}
@@ -70,8 +75,6 @@ def main():
     
     # ---- Creating Our Initial Quantum State in Energy/Fock Basis, |0> ----
     initial_state = Wavefunction(basis_to_coefs={"energy" : zero_state["energy"].copy()})
-
-    populations = [[] for i in range(n_cut)] # to store measurement probabilities
     
     if PLOT:
         plt.ion()
@@ -95,20 +98,18 @@ def main():
     theta_target = np.pi/2
     
     # Number of kicks in pulse train
-    N = 47
+    N_kicks = 47
     # N = int(np.round(theta_target / theta))
     
     system = System(
-        energy_states=energy_states,
-        n=n,
-        n_zpf=n_zpf,
-        theta=THETA,
-        H0=H0,
-        qubit_angular_frequency=omega_q,
+        transmons=transmons,
+        EC_matrix=EC_matrix,
+        thetas=THETAS,
         clock_multiplier=clock_multiplier,
         initial_state=initial_state,
-        N=N,
-        ramp=ramp
+        ramp=ramp,
+        N_kicks=N_kicks,
+        flux_schedule=[]
     )
     
     RY_TARGET = Operator(
@@ -118,10 +119,10 @@ def main():
             ])}
     )
 
-    for i in range(100):
+    for i in range(1):
         system.state.reset_accumulated_unitary() 
         
-        system.RY()
+        system.RY(k=0)
         U = system.state.get_accumulated_unitary()
 
         U_Q_full = Operator(
@@ -146,8 +147,6 @@ def main():
         
         probabilities = system.state.get_probabilities("energy")
         
-        for idx, p in enumerate(probabilities):
-            populations[idx].append(p)
         
         if PLOT:
             state_azimuth, state_inclination = get_spherical_coords(alpha=system.state["energy"][0],
@@ -235,8 +234,8 @@ def main():
             
             # ---- Fock Populations ----
             ax_fock.cla()
-            ax_fock.bar(np.arange(n_proj), probabilities, color='steelblue')
-            ax_fock.set_xlim(-0.5, n_proj - 0.5)
+            ax_fock.bar(np.arange(n_full), probabilities, color='steelblue')
+            ax_fock.set_xlim(-0.5, n_full - 0.5)
             ax_fock.set_ylim(0, 1)
             ax_fock.set_xlabel("Energy (Or Fock) State |n⟩", fontsize=12)
             ax_fock.set_ylabel("Probability", fontsize=12)

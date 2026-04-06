@@ -10,14 +10,14 @@ class Transmon(QuantumOscillator):
     """
     A Transmon system
     """
-    def __init__(self, EC: float, EJ_EC: float, n_cut: int):
+    def __init__(self, EC: float, EJ_EC: float, n: int):
         self.EC = EC                       # Charging energy
         self.EJ = EJ_EC * self.EC          # Josephson energy
         self.r  = (1/2)*(EJ_EC / 2)**(1/4) # charge zero-point-fluctuation
         
         # Charge operator
         self.n = Operator(
-            basis_to_matrix={"charge" : np.diag([n for n in range(int(-(n_cut-1)/2), int((n_cut-1)/2) + 1)])}
+            basis_to_matrix={"charge" : np.diag([n for n in range(int(-(n-1)/2), int((n-1)/2) + 1)])}
         )   
         
         # Kinetic energy operator
@@ -27,7 +27,7 @@ class Transmon(QuantumOscillator):
         
         # Potential energy operator
         self.V = Operator(
-            basis_to_matrix={"charge" : create_upper_lower(value=-self.EJ / 2, dim=n_cut)}
+            basis_to_matrix={"charge" : create_upper_lower(value=-self.EJ / 2, dim=n)}
         ) 
         
         # Unperturbed Hamiltonian operator
@@ -56,6 +56,13 @@ class Transmon(QuantumOscillator):
             
         # Get n in the energy basis
         self.n["energy"] = energy_states.conj().T @ self.n["charge"] @ energy_states
+        
+        self.operators = {
+            "n" : self.n,
+            "T" : self.T,
+            "V" : self.V,
+            "H0": self.H0,
+        }
                         
         
             

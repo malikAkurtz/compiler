@@ -35,9 +35,10 @@ class Wavefunction():
     def apply(self, operator: Operator):        
         # Apply the operator to each basis representation of the wavefunction
         for basis, coefs in self.basis_to_coefs.items():
-            n_proj = len(coefs)
-            self.basis_to_coefs[basis] = (operator[basis][:n_proj, :n_proj] @ coefs.reshape(-1, 1)).flatten()
-            self.U[basis] = operator[basis][:n_proj, :n_proj] @ self.U[basis]
+            op_mat = operator[basis]
+            print(f"Op shape: {op_mat.shape}, Coefs shape: {coefs.shape}")
+            self.basis_to_coefs[basis] = (op_mat @ coefs).flatten()
+            self.U[basis] = operator[basis] @ self.U[basis]
         
     def get_accumulated_unitary(self):
         return self.U
