@@ -10,7 +10,7 @@ class Transmon(QuantumOscillator):
     """
     A Transmon system
     """
-    def __init__(self, EC: float, EJ_EC: float, n: int):
+    def __init__(self, EC: float, EJ_EC: float, PHI_off: np.ndarray, PHI_on: np.ndarray, n: int):
         self.EC = EC                       # Charging energy
         self.EJ = EJ_EC * self.EC          # Josephson energy
         self.r  = (1/2)*(EJ_EC / 2)**(1/4) # charge zero-point-fluctuation
@@ -63,8 +63,15 @@ class Transmon(QuantumOscillator):
             "V" : self.V,
             "H0": self.H0,
         }
-                        
+                       
+    @staticmethod
+    def calculate_effective_EJ(external_flux: float, JL: float, JR: float):
+        EJL = REDUCED_FLUX_QUANTUM * JL
+        EJR = REDUCED_FLUX_QUANTUM * JR
         
+        d   = (JR - JL) / (JR + JL)
+        
+        return (EJL + EJR) * np.cos(external_flux / (2 * REDUCED_FLUX_QUANTUM)) * np.sqrt(1 + (d**2) * (np.tan(external_flux / (2 * REDUCED_FLUX_QUANTUM))**2))
             
         
     

@@ -4,8 +4,10 @@ from scipy.linalg import ishermitian
 import matplotlib.pyplot as plt
 
 from System import System
+from Transmon import Transmon
 from Operator import Operator
 from Wavefunction import Wavefunction
+from PauliMatrices import X, Y, Z
 from utils import *
 from constants import *
 from fidelity import *
@@ -16,65 +18,68 @@ PLOT = True
 
 def main():
     # ---- Shared Hyper-parameters ----
-    n                  = 101            # Number of charge states, -n/2 : n/2 for each transmon
-    n_trunc            = 7              # number of states to truncate to for each transmon
+    n                  = 51            # Number of charge states, -n/2 : n/2 for each transmon
+    n_trunc            = 3              # number of states to truncate to for each transmon
     clock_multiplier   = 8
     ramp               = ['01000000', '11000000', '10000000', '00000000', '00000000']
     
     # ---- Transmon Circuit Hyper-parameters ----
-    EJ_EC = 69
-    EC    = h * 250 * 1e6   # Charging energy [J]
-    THETAS = np.array([0.03])
+    THETAS  = np.array([np.pi/100, np.pi/100])
+    PHI_on  = np.array([0.130, 0.352, 0.130]) * FLUX_QUANTUM
+    PHI_off = np.array([0.130, 0.376, 0.130]) * FLUX_QUANTUM
     
-    # ---- Derived Physical Constants ----
-    EJ    = EJ_EC * EC
-    n_zpf = (1/2) * (EJ_EC / 2)**(1/4) # approximation
-    BETAS  = THETAS / (2 * n_zpf)        # approximation
-    C_T   = e**2 / (2 * EC)
-    CC    = (BETAS[0] * hbar * C_T) / FLUX_QUANTUM
-    C     = C_T - CC
+    J1L = 7 * 1e-9  # [nA]
+    J2L = 7 * 1e-9  # [nA]
+    J1R = 21 * 1e-9 # [nA]
+    J2R = 21 * 1e-9 # [nA]
+    JcL = 18 * 1e-9 # [nA]
+    JcR = 36 * 1e-9 # [nA]
     
-    C  = 7.748091729863649e-14
-    CC = 4.891271340097761e-35
-    EJ = 1.142997100875e-23
+    C1  = 70 * 1e-15   # [F]
+    C2  = 70 * 1e-15   # [F]
+    Cc  = 60 * 1e-15   # [F]
+    C12 = 0.25 * 1e-15 # [F]
+    C1c = 2 * 1e-15    # [F]
+    C2c = 2 * 1e-15    # [F]
     
     # ---- Graph Representation of the Transmon Circuit ----
+    EJ1 = Transmon.calculate_effective_EJ(external_flux=PHI_off[0], JL=J1L, JR=J1R)
+    EJc = Transmon.calculate_effective_EJ(external_flux=PHI_off[1], JL=JcL, JR=JcR)
+    EJ2 = Transmon.calculate_effective_EJ(external_flux=PHI_off[2], JL=J2L, JR=J2R)
+    
     graph_rep = {
-        'nodes': ['a'],
+        'nodes': ['q1', 'c', 'q2'],
         'capacitors': [
-            ('a', 'gnd', C),  # Shunt capacitor
-            ('a', 'gnd', CC), # Coupling capacitor
+            ('q1', 'gnd', C1),
+            ('q1', 'c', C1c),
+            ('q1', 'q2', C12),
+            ('c', 'gnd', Cc),
+            ('c', 'q2', C2c),
+            ('q2', 'gnd', C2),
         ],
         'inductors': [],
         'josephson_elements': [
-            ('a', 'gnd', EJ),
+            ('q1', 'gnd', EJ1),
+            ('c',  'gnd', EJc),
+            ('q2', 'gnd', EJ2),
         ],
         'external_flux': {}
     }
     
-    
     circuit = Circuit(graph_rep=graph_rep)
     
-    transmons, EC_matrix = quantize(circuit=circuit, n=n)
+    transmons, EC_matrix = quantize(circuit=circuit, PHI_off=PHI_off, PHI_on=PHI_on, n=n)
         
     n_full = n_trunc ** len(transmons)
     
-    for k in range(len(transmons)):
-        print(f"n['energy'][:2,:2]: ") 
-        print(transmons[k].n["energy"][:2,:2])
-        print(f"n Hermitian = {np.allclose(transmons[k].n["energy"], transmons[k].n["energy"].conj().T)}")
-        print(f"n Unitary = {np.allclose(np.eye(len(transmons[k].n["energy"])), transmons[k].n["energy"] @ transmons[k].n["energy"].conj().T)}")
+    print(f"Full Hilbert space dimension: {n_full}")
     
-    # ---- Create Quantum States |0>, |1>, and the projector onto the computational subspace H_2 ----
-    zero_state = Wavefunction(basis_to_coefs={"energy" : np.array([1] + (n_full - 1) * [0])})
-    one_state  = Wavefunction(basis_to_coefs={"energy" : np.array([0] + [1] + (n_full - 2) * [0])})
+    # ---- Create Quantum States |0>, |1>, ----
+    zero = Wavefunction(basis_to_coefs={"energy" : np.array([1] + (n_full - 1) * [0])})
+    one  = Wavefunction(basis_to_coefs={"energy" : np.array([0] + [1] + (n_full - 2) * [0])})
     
-    P_Q = Operator(
-        basis_to_matrix={"energy": np.outer(to_ket(zero_state["energy"]), to_bra(zero_state["energy"])) + np.outer(to_ket(one_state["energy"]), to_bra(one_state["energy"]))}
-    )
-    
-    # ---- Creating Our Initial Quantum State in Energy/Fock Basis, |0> ----
-    initial_state = Wavefunction(basis_to_coefs={"energy" : zero_state["energy"].copy()})
+    # ---- Creating Our Initial Quantum State in Energy basis, |00> ----
+    initial_state = Wavefunction(basis_to_coefs={"energy" : zero["energy"].copy()})
     
     if PLOT:
         plt.ion()
@@ -99,7 +104,6 @@ def main():
     
     # Number of kicks in pulse train
     N_kicks = 47
-    # N = int(np.round(theta_target / theta))
     
     system = System(
         transmons=transmons,
@@ -109,7 +113,6 @@ def main():
         initial_state=initial_state,
         ramp=ramp,
         N_kicks=N_kicks,
-        flux_schedule=[]
     )
     
     RY_TARGET = Operator(
@@ -119,43 +122,50 @@ def main():
             ])}
     )
 
-    for i in range(1):
-        system.state.reset_accumulated_unitary() 
-        
+    for i in range(100):
+        # system.state.reset_accumulated_unitary() 
+        print("Applying RY")
         system.RY(k=0)
-        U = system.state.get_accumulated_unitary()
+        
+        # U = system.state.get_accumulated_unitary()
 
-        U_Q_full = Operator(
-            basis_to_matrix={"energy" : P_Q["energy"] @ U["energy"] @ P_Q["energy"]}
-        )
+        # U_Q = Operator(
+        #     basis_to_matrix={"energy": U["energy"][:2, :2]}
+        # )
         
-        U_Q = Operator(
-            basis_to_matrix={"energy": U_Q_full["energy"][:2, :2]}
-        )
+        # L1 = get_L1(U=U_Q, basis="energy")
         
-        L1 = get_L1(U=U_Q, basis="energy")
-        
-        # print(f"Leakage Metric: {leakage}")
-        process_fidelity = get_process_fidelity(U_Q=U_Q, U_target=RY_TARGET, basis="energy")
-        # print(f"Process Fidelity: {process_fidelity}")
-        avg_gate_fidelity = get_average_gate_fidelity(process_fidelity=process_fidelity, L1=L1)
-        # print(f"Average Gate Fidelity in the Absence of a Loss Channel: {avg_gate_fidelity}")
-        print(f"L1: {L1}")
-        r = np.linalg.norm(get_pauli_coefs(U=U_Q, basis="energy"))
-        print(f"r: {r}")
-        print(f"Fidelity: {avg_gate_fidelity}")
+        # # print(f"Leakage Metric: {leakage}")
+        # process_fidelity = get_process_fidelity(U_Q=U_Q, U_target=RY_TARGET, basis="energy")
+        # # print(f"Process Fidelity: {process_fidelity}")
+        # avg_gate_fidelity = get_average_gate_fidelity(process_fidelity=process_fidelity, L1=L1)
+        # # print(f"Average Gate Fidelity in the Absence of a Loss Channel: {avg_gate_fidelity}")
+        # print(f"L1: {L1}")
+        # r = np.linalg.norm(get_pauli_coefs(U=U_Q, basis="energy"))
+        # print(f"r: {r}")
+        # print(f"Fidelity: {avg_gate_fidelity}")
         
         probabilities = system.state.get_probabilities("energy")
+                
+        rho = np.outer(to_ket(system.state["energy"]), to_bra(system.state["energy"]))
         
+        psi = system.state["energy"].reshape(n_trunc, n_trunc, n_trunc)
+        
+        A = psi.reshape(n_trunc, n_trunc**2)
+        
+        A = A.reshape(n_trunc, n_trunc**2)
+        
+        rho_1 = A @ A.conj().T
+        
+        x = np.trace(rho_1[:2, :2] @ X).real
+        y = np.trace(rho_1[:2, :2] @ Y).real
+        z = np.trace(rho_1[:2, :2] @ Z).real
         
         if PLOT:
-            state_azimuth, state_inclination = get_spherical_coords(alpha=system.state["energy"][0],
-                                                                    beta=system.state["energy"][1])
-            bx, by, bz = get_rectangular_coords(azimuth=state_azimuth, inclination=state_inclination)
             
-            bx_hist.append(bx)
-            by_hist.append(by)
-            bz_hist.append(bz)
+            bx_hist.append(x)
+            by_hist.append(y)
+            bz_hist.append(z)
             
             # ---- Bloch Sphere ----
             ax_bloch.cla()
@@ -176,8 +186,8 @@ def main():
             ax_bloch.text(1.15, 0, 0, "X", ha='center', fontsize=10, color='gray')
             ax_bloch.text(0, 1.15, 0, "Y", ha='center', fontsize=10, color='gray')
             
-            ax_bloch.quiver(0, 0, 0, bx, by, bz, color='red', arrow_length_ratio=0.08, linewidth=2.5)
-            ax_bloch.scatter([bx], [by], [bz], color='red', s=40, zorder=5)
+            ax_bloch.quiver(0, 0, 0, x, y, z, color='red', arrow_length_ratio=0.08, linewidth=2.5)
+            ax_bloch.scatter([x], [y], [z], color='red', s=40, zorder=5)
             
             ax_bloch.set_xlim([-1.3, 1.3])
             ax_bloch.set_ylim([-1.3, 1.3])
@@ -192,7 +202,7 @@ def main():
             circle = plt.Circle((0, 0), 1, fill=False, color='gray', linewidth=0.5)
             ax_xy.add_patch(circle)
             ax_xy.plot(bx_hist, by_hist, color='blue', alpha=0.3, linewidth=1)
-            ax_xy.scatter([bx], [by], color='red', s=50, zorder=5)
+            ax_xy.scatter([x], [y], color='red', s=50, zorder=5)
             ax_xy.axhline(0, color='gray', linewidth=0.3)
             ax_xy.axvline(0, color='gray', linewidth=0.3)
             ax_xy.set_xlim([-1.3, 1.3])
@@ -207,7 +217,7 @@ def main():
             circle = plt.Circle((0, 0), 1, fill=False, color='gray', linewidth=0.5)
             ax_xz.add_patch(circle)
             ax_xz.plot(bx_hist, bz_hist, color='blue', alpha=0.3, linewidth=1)
-            ax_xz.scatter([bx], [bz], color='red', s=50, zorder=5)
+            ax_xz.scatter([x], [z], color='red', s=50, zorder=5)
             ax_xz.axhline(0, color='gray', linewidth=0.3)
             ax_xz.axvline(0, color='gray', linewidth=0.3)
             ax_xz.set_xlim([-1.3, 1.3])
@@ -222,7 +232,7 @@ def main():
             circle = plt.Circle((0, 0), 1, fill=False, color='gray', linewidth=0.5)
             ax_yz.add_patch(circle)
             ax_yz.plot(by_hist, bz_hist, color='blue', alpha=0.3, linewidth=1)
-            ax_yz.scatter([by], [bz], color='red', s=50, zorder=5)
+            ax_yz.scatter([y], [z], color='red', s=50, zorder=5)
             ax_yz.axhline(0, color='gray', linewidth=0.3)
             ax_yz.axvline(0, color='gray', linewidth=0.3)
             ax_yz.set_xlim([-1.3, 1.3])

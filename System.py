@@ -9,7 +9,7 @@ from Wavefunction import Wavefunction
 from constants import *
 
 class System():
-    def __init__(self, transmons: list[Transmon], EC_matrix: np.ndarray, thetas: np.ndarray, clock_multiplier: int, initial_state: Wavefunction, ramp: list[str], N_kicks: int, flux_schedule: np.ndarray):
+    def __init__(self, transmons: list[Transmon], EC_matrix: np.ndarray, thetas: np.ndarray, clock_multiplier: int, initial_state: Wavefunction, ramp: list[str], N_kicks: int):
         self.transmons     = transmons
         self.EC_matrix     = EC_matrix
         self.thetas        = thetas
@@ -17,7 +17,7 @@ class System():
         self.state         = initial_state  
         self.ramp          = ramp
         self.N_kicks       = N_kicks
-        self.flux_schedule = flux_schedule
+        self.coupling      = False
         
         self.n_full        = len(self.state["energy"]) # Dimension of full Hilbert space of the system
         self.n_trunc       = int(round(self.n_full**(1/len(self.transmons))))
@@ -36,6 +36,7 @@ class System():
         
         
         # ---- Truncate each transmon to n_trunc x n_trunc, then upgrade it to the n_full state space
+        print("Starting truncate/upgrade...")
         self.sys_transmons = self.sys_transmons = copy.deepcopy(self.transmons)
         
         for k in range(len(self.transmons)):
@@ -56,6 +57,7 @@ class System():
         self.T_c           = self.T_q[0] / self.M                                                      # Clock period [s]
         
         # ---- Derive Kick Operators for Logical Qubits 1 (and 2)
+        print("Building kick operators...")
         self.transmon_to_kick = {}
         
         self.transmon_to_kick[0] = Operator(
@@ -84,23 +86,25 @@ class System():
                 operator=self.transmon_to_kick[2],
                 n_trunc=self.n_trunc,
                 idx=2,
-                num_sub_systems=len(self.transmons)
+                num_subsystems=len(self.transmons)
             )
         
         # ---- Derive Coupling Hamiltonain HC ----
+        print("Building coupling Hamiltonian...")
         coupling_sum = 0
         for k in range(len(self.transmons)):
             for l in range(len(self.transmons)):
                 if k == l:
                     continue
                 else:   
-                    coupling_sum += (self.sys_transmons[k].operators["n"]["energy"] * self.EC_matrix[k][l] * self.sys_transmons[l].operators["n"]["energy"])
+                    coupling_sum += (self.EC_matrix[k][l] * self.sys_transmons[k].operators["n"]["energy"] @ self.sys_transmons[l].operators["n"]["energy"])
                 
         self.HC = Operator(
             basis_to_matrix={"energy" : 4 * coupling_sum}
         )
         
         # ---- Derive the Unperturbed Hamiltonian H0 ----
+        print("Building H0...")
         total_h0 = self.sys_transmons[0].operators["H0"]["energy"]
         for t in self.sys_transmons[1:]:
             total_h0 = total_h0 + t.operators["H0"]["energy"]
@@ -109,7 +113,28 @@ class System():
             basis_to_matrix={"energy": total_h0 + self.HC["energy"]}
         )
         
-        print(self.H0["energy"])
+        print(f"n_full = {self.n_full}")
+        print(f"n_trunc = {self.n_trunc}")
+        print(f"H0 shape = {self.H0['energy'].shape}")
+        print(f"state length = {len(self.state['energy'])}")
+        
+        # ---- For single qubit case ----
+        print("Computing U1, UM...")
+        self.U1 = Operator(
+            basis_to_matrix={"energy": expm(-1j * self.H0["energy"] * (1 * self.T_c) / hbar)}
+        )
+        
+        self.UM = Operator(
+            basis_to_matrix={"energy": expm(-1j * self.H0["energy"] * (self.M * self.T_c) / hbar)}
+        )
+        
+        print("System init complete.")
+                
+    def switch_coupling(self):
+        if self.coupling == False:
+            self.coupling == True
+        else:
+            self.coupling == False
         
     def free_evolve(self, clock_cycles: int):
         self.state.apply(
@@ -125,9 +150,10 @@ class System():
         for _ in range(self.N_kicks):
             self.state.apply(self.transmon_to_kick[k])
             
-            self.free_evolve(
-                clock_cycles=self.M,
-            )
+            self.state.apply(self.UM)
+            # self.free_evolve(
+            #     clock_cycles=self.M,
+            # )
         
         self.off_ramp_evolve(k)
             
@@ -137,13 +163,13 @@ class System():
             for action in sequence:
                 if action == "0":
                     # free evolve for a single clock cycle
-                    self.free_evolve(clock_cycles=1)
+                    self.state.apply(self.U1)
                 else:
                     # kick
                     self.state.apply(self.transmon_to_kick[k])
 
                     # free evolve for a single clock cycle
-                    self.free_evolve(clock_cycles=1)
+                    self.state.apply(self.U1)
 
     def off_ramp_evolve(self, k: int):
         flipped_ramps = [self.flip_X_ramp(r) for r in self.ramp][::-1]
@@ -152,13 +178,13 @@ class System():
             for action in sequence:
                 if action == "0":
                     # free evolve for a single clock cycle
-                    self.free_evolve(clock_cycles=1)
+                    self.state.apply(self.U1)
                 else:
                     # kick
                     self.state.apply(self.transmon_to_kick[k])
 
                     # free evolve for a single clock cycle
-                    self.free_evolve(clock_cycles=1)
+                    self.state.apply(self.U1)
 
     @staticmethod
     def flip_X_ramp(ramp: str):

@@ -2,7 +2,7 @@
 from __future__ import annotations
 from typing import Optional
 import numpy as np
-from constants import PHI_0
+from constants import REDUCED_FLUX_QUANTUM
 
 ######################################## NODE CLASS ########################################
 class Node:
@@ -79,7 +79,7 @@ class JosephsonElement(InductiveElement):
         self.EJ = josephson_energy
         
     def calculate_energy(self, branch_flux: float, branch_flux_offset: float):
-        return -self.EJ * np.cos( (branch_flux - branch_flux_offset) / PHI_0)
+        return -self.EJ * np.cos( (branch_flux - branch_flux_offset) / REDUCED_FLUX_QUANTUM)
 ######################################## JOSEPHSON ELEMENT CLASS ########################################
 
 ######################################## GRAPH CLASS ########################################
@@ -357,8 +357,8 @@ class Circuit:
 from scipy.constants import h, hbar, e
 
 # Reduced Flux Quantum
-PHI_0 = hbar / (2 * e)    # reduced flux quantum, for dimensionless phase
-FLUX_QUANTUM = h / (2 * e) # physical flux quantum, for SFQ kick angle
+REDUCED_FLUX_QUANTUM = hbar / (2 * e)   # reduced flux quantum, for dimensionless phase
+FLUX_QUANTUM         = h / (2 * e)      # physical flux quantum, for SFQ kick angle
 
 
 ================ fidelity.py ================
@@ -381,6 +381,276 @@ def get_process_fidelity(U_Q: Operator, U_target: Operator, basis: str):
 def get_average_gate_fidelity(process_fidelity: float, L1: float):
     fidelity = ( (2 * process_fidelity) + 1 - L1 ) / 3
     return fidelity.real
+
+
+================ multi_qubit.py ================
+import numpy as np
+from scipy.linalg import expm
+from scipy.linalg import ishermitian
+import matplotlib.pyplot as plt
+
+from System import System
+from Transmon import Transmon
+from Operator import Operator
+from Wavefunction import Wavefunction
+from PauliMatrices import X, Y, Z
+from utils import *
+from constants import *
+from fidelity import *
+from Circuit import Circuit
+from Quantize import quantize
+
+PLOT = True
+
+def main():
+    # ---- Shared Hyper-parameters ----
+    n                  = 51            # Number of charge states, -n/2 : n/2 for each transmon
+    n_trunc            = 3              # number of states to truncate to for each transmon
+    clock_multiplier   = 8
+    ramp               = ['01000000', '11000000', '10000000', '00000000', '00000000']
+    
+    # ---- Transmon Circuit Hyper-parameters ----
+    THETAS  = np.array([np.pi/100, np.pi/100])
+    PHI_on  = np.array([0.130, 0.352, 0.130]) * FLUX_QUANTUM
+    PHI_off = np.array([0.130, 0.376, 0.130]) * FLUX_QUANTUM
+    
+    J1L = 7 * 1e-9  # [nA]
+    J2L = 7 * 1e-9  # [nA]
+    J1R = 21 * 1e-9 # [nA]
+    J2R = 21 * 1e-9 # [nA]
+    JcL = 18 * 1e-9 # [nA]
+    JcR = 36 * 1e-9 # [nA]
+    
+    C1  = 70 * 1e-15   # [F]
+    C2  = 70 * 1e-15   # [F]
+    Cc  = 60 * 1e-15   # [F]
+    C12 = 0.25 * 1e-15 # [F]
+    C1c = 2 * 1e-15    # [F]
+    C2c = 2 * 1e-15    # [F]
+    
+    # ---- Graph Representation of the Transmon Circuit ----
+    EJ1 = Transmon.calculate_effective_EJ(external_flux=PHI_off[0], JL=J1L, JR=J1R)
+    EJc = Transmon.calculate_effective_EJ(external_flux=PHI_off[1], JL=JcL, JR=JcR)
+    EJ2 = Transmon.calculate_effective_EJ(external_flux=PHI_off[2], JL=J2L, JR=J2R)
+    
+    graph_rep = {
+        'nodes': ['q1', 'c', 'q2'],
+        'capacitors': [
+            ('q1', 'gnd', C1),
+            ('q1', 'c', C1c),
+            ('q1', 'q2', C12),
+            ('c', 'gnd', Cc),
+            ('c', 'q2', C2c),
+            ('q2', 'gnd', C2),
+        ],
+        'inductors': [],
+        'josephson_elements': [
+            ('q1', 'gnd', EJ1),
+            ('c',  'gnd', EJc),
+            ('q2', 'gnd', EJ2),
+        ],
+        'external_flux': {}
+    }
+    
+    circuit = Circuit(graph_rep=graph_rep)
+    
+    transmons, EC_matrix = quantize(circuit=circuit, PHI_off=PHI_off, PHI_on=PHI_on, n=n)
+        
+    n_full = n_trunc ** len(transmons)
+    
+    print(f"Full Hilbert space dimension: {n_full}")
+    
+    # ---- Create Quantum States |0>, |1>, ----
+    zero = Wavefunction(basis_to_coefs={"energy" : np.array([1] + (n_full - 1) * [0])})
+    one  = Wavefunction(basis_to_coefs={"energy" : np.array([0] + [1] + (n_full - 2) * [0])})
+    
+    # ---- Creating Our Initial Quantum State in Energy basis, |00> ----
+    initial_state = Wavefunction(basis_to_coefs={"energy" : zero["energy"].copy()})
+    
+    if PLOT:
+        plt.ion()
+        fig = plt.figure(figsize=(16, 8))
+
+        # ---- Bloch Sphere Subplot ----
+        ax_bloch = fig.add_subplot(2, 3, 1, projection='3d')
+
+        # ---- Projection Subplots ----
+        ax_xy = fig.add_subplot(2, 3, 2)
+        ax_xz = fig.add_subplot(2, 3, 3)
+        ax_yz = fig.add_subplot(2, 3, 4)
+
+        # ---- Fock Populations Subplot ----
+        ax_fock = fig.add_subplot(2, 3, (5, 6))
+
+        # Store Bloch vector history for trail
+        bx_hist, by_hist, bz_hist = [], [], []
+            
+    # Target Unitary rotation
+    theta_target = np.pi/2
+    
+    # Number of kicks in pulse train
+    N_kicks = 47
+    
+    system = System(
+        transmons=transmons,
+        EC_matrix=EC_matrix,
+        thetas=THETAS,
+        clock_multiplier=clock_multiplier,
+        initial_state=initial_state,
+        ramp=ramp,
+        N_kicks=N_kicks,
+    )
+    
+    RY_TARGET = Operator(
+        basis_to_matrix={"energy": np.array([
+                [np.cos(theta_target / 2), -np.sin(theta_target / 2)],
+                [np.sin(theta_target / 2), np.cos(theta_target / 2)]
+            ])}
+    )
+
+    for i in range(1):
+        # system.state.reset_accumulated_unitary() 
+        print("Applying RY")
+        system.RY(k=0)
+        
+        # U = system.state.get_accumulated_unitary()
+
+        # U_Q = Operator(
+        #     basis_to_matrix={"energy": U["energy"][:2, :2]}
+        # )
+        
+        # L1 = get_L1(U=U_Q, basis="energy")
+        
+        # # print(f"Leakage Metric: {leakage}")
+        # process_fidelity = get_process_fidelity(U_Q=U_Q, U_target=RY_TARGET, basis="energy")
+        # # print(f"Process Fidelity: {process_fidelity}")
+        # avg_gate_fidelity = get_average_gate_fidelity(process_fidelity=process_fidelity, L1=L1)
+        # # print(f"Average Gate Fidelity in the Absence of a Loss Channel: {avg_gate_fidelity}")
+        # print(f"L1: {L1}")
+        # r = np.linalg.norm(get_pauli_coefs(U=U_Q, basis="energy"))
+        # print(f"r: {r}")
+        # print(f"Fidelity: {avg_gate_fidelity}")
+        
+        probabilities = system.state.get_probabilities("energy")
+                
+        rho = np.outer(to_ket(system.state["energy"]), to_bra(system.state["energy"]))
+        
+        psi = system.state.get_probabilities("energy").reshape(n_trunc, n_trunc, n_trunc)
+        
+        A = psi.reshape(n_trunc, n_trunc**2)
+        
+        A = A.reshape(n_trunc, n_trunc**2)
+        
+        rho_1 = A @ A.conj().T
+        
+        x = np.trace(rho_1[:2, :2] @ X)
+        y = np.trace(rho_1[:2, :2] @ Y)
+        z = np.trace(rho_1[:2, :2] @ Z)
+        
+        if PLOT:
+            
+            bx_hist.append(x)
+            by_hist.append(y)
+            bz_hist.append(z)
+            
+            # ---- Bloch Sphere ----
+            ax_bloch.cla()
+            
+            u = np.linspace(0, 2 * np.pi, 30)
+            v = np.linspace(0, np.pi, 20)
+            x = np.outer(np.cos(u), np.sin(v))
+            y = np.outer(np.sin(u), np.sin(v))
+            z = np.outer(np.ones(u.size), np.cos(v))
+            ax_bloch.plot_wireframe(x, y, z, alpha=0.08, color='gray', linewidth=0.5)
+            
+            ax_bloch.plot([-1, 1], [0, 0], [0, 0], color='gray', linewidth=0.5, linestyle='--')
+            ax_bloch.plot([0, 0], [-1, 1], [0, 0], color='gray', linewidth=0.5, linestyle='--')
+            ax_bloch.plot([0, 0], [0, 0], [-1, 1], color='gray', linewidth=0.5, linestyle='--')
+            
+            ax_bloch.text(0, 0, 1.15, "|0⟩", ha='center', fontsize=12, fontweight='bold')
+            ax_bloch.text(0, 0, -1.15, "|1⟩", ha='center', fontsize=12, fontweight='bold')
+            ax_bloch.text(1.15, 0, 0, "X", ha='center', fontsize=10, color='gray')
+            ax_bloch.text(0, 1.15, 0, "Y", ha='center', fontsize=10, color='gray')
+            
+            ax_bloch.quiver(0, 0, 0, x, y, z, color='red', arrow_length_ratio=0.08, linewidth=2.5)
+            ax_bloch.scatter([x], [y], [z], color='red', s=40, zorder=5)
+            
+            ax_bloch.set_xlim([-1.3, 1.3])
+            ax_bloch.set_ylim([-1.3, 1.3])
+            ax_bloch.set_zlim([-1.3, 1.3])
+            ax_bloch.set_box_aspect([1, 1, 1])
+            ax_bloch.set_title("Bloch Sphere", fontsize=14, pad=10)
+            ax_bloch.set_axis_off()
+            ax_bloch.view_init(elev=20, azim=30)
+            
+            # ---- XY Projection ----
+            ax_xy.cla()
+            circle = plt.Circle((0, 0), 1, fill=False, color='gray', linewidth=0.5)
+            ax_xy.add_patch(circle)
+            ax_xy.plot(bx_hist, by_hist, color='blue', alpha=0.3, linewidth=1)
+            ax_xy.scatter([x], [y], color='red', s=50, zorder=5)
+            ax_xy.axhline(0, color='gray', linewidth=0.3)
+            ax_xy.axvline(0, color='gray', linewidth=0.3)
+            ax_xy.set_xlim([-1.3, 1.3])
+            ax_xy.set_ylim([-1.3, 1.3])
+            ax_xy.set_aspect('equal')
+            ax_xy.set_xlabel("X")
+            ax_xy.set_ylabel("Y")
+            ax_xy.set_title("XY Projection", fontsize=12)
+            
+            # ---- XZ Projection ----
+            ax_xz.cla()
+            circle = plt.Circle((0, 0), 1, fill=False, color='gray', linewidth=0.5)
+            ax_xz.add_patch(circle)
+            ax_xz.plot(bx_hist, bz_hist, color='blue', alpha=0.3, linewidth=1)
+            ax_xz.scatter([x], [z], color='red', s=50, zorder=5)
+            ax_xz.axhline(0, color='gray', linewidth=0.3)
+            ax_xz.axvline(0, color='gray', linewidth=0.3)
+            ax_xz.set_xlim([-1.3, 1.3])
+            ax_xz.set_ylim([-1.3, 1.3])
+            ax_xz.set_aspect('equal')
+            ax_xz.set_xlabel("X")
+            ax_xz.set_ylabel("Z")
+            ax_xz.set_title("XZ Projection", fontsize=12)
+            
+            # ---- YZ Projection ----
+            ax_yz.cla()
+            circle = plt.Circle((0, 0), 1, fill=False, color='gray', linewidth=0.5)
+            ax_yz.add_patch(circle)
+            ax_yz.plot(by_hist, bz_hist, color='blue', alpha=0.3, linewidth=1)
+            ax_yz.scatter([y], [z], color='red', s=50, zorder=5)
+            ax_yz.axhline(0, color='gray', linewidth=0.3)
+            ax_yz.axvline(0, color='gray', linewidth=0.3)
+            ax_yz.set_xlim([-1.3, 1.3])
+            ax_yz.set_ylim([-1.3, 1.3])
+            ax_yz.set_aspect('equal')
+            ax_yz.set_xlabel("Y")
+            ax_yz.set_ylabel("Z")
+            ax_yz.set_title("YZ Projection", fontsize=12)
+            
+            # ---- Fock Populations ----
+            ax_fock.cla()
+            ax_fock.bar(np.arange(n_full), probabilities, color='steelblue')
+            ax_fock.set_xlim(-0.5, n_full - 0.5)
+            ax_fock.set_ylim(0, 1)
+            ax_fock.set_xlabel("Energy (Or Fock) State |n⟩", fontsize=12)
+            ax_fock.set_ylabel("Probability", fontsize=12)
+            ax_fock.set_title(f"Energy (Or Fock) Populations (kick # = {i:.4e} s)", fontsize=14)
+            
+            fig.tight_layout()
+            fig.canvas.draw()
+            fig.canvas.flush_events()
+
+        print(f"Final State: ")
+        print(system.state["energy"][:3])
+    
+    if PLOT:
+        plt.ioff()
+        plt.show()
+        
+    
+if __name__=="__main__":
+    main()
 
 
 ================ Operator.py ================
@@ -540,12 +810,13 @@ if __name__=="__main__":
 #
 ###############################################################################
 
+import numpy as np
 from constants import *
 from Transmon import Transmon
 from Circuit import Circuit
 
 
-def quantize(circuit: Circuit, n: int):
+def quantize(circuit: Circuit, PHI_off: np.ndarray, PHI_on: np.ndarray, n: int):
     """
     Parameters
     ----------
@@ -555,7 +826,7 @@ def quantize(circuit: Circuit, n: int):
         Hilbert-space dimension: Cooper-pair numbers run from -n to +n
         (charge basis), or Fock states 0..n_cut-1 (Fock basis).
     """
-    EC_matrix = e**2 / (2 * circuit.capacitance_matrix)
+    EC_matrix = (e**2 / 2) * circuit.inv_capacitance_matrix
     
     transmons = []
     
@@ -567,6 +838,8 @@ def quantize(circuit: Circuit, n: int):
         transmons.append(Transmon(
             EC=EC,
             EJ_EC=EJ_EC,
+            PHI_off=PHI_off,
+            PHI_on=PHI_on,
             n=n
         ))
         
@@ -741,7 +1014,7 @@ if __name__=="__main__":
     main()
 
 
-================ qubit.py ================
+================ single_qubit.py ================
 import numpy as np
 from scipy.linalg import expm
 from scipy.linalg import ishermitian
@@ -762,7 +1035,6 @@ def main():
     # ---- Shared Hyper-parameters ----
     n                  = 101            # Number of charge states, -n/2 : n/2 for each transmon
     n_trunc            = 5              # number of states to truncate to for each transmon
-    n_full             = n_trunc * 3
     clock_multiplier   = 8
     ramp               = ['01000000', '11000000', '10000000', '00000000', '00000000']
     
@@ -802,6 +1074,8 @@ def main():
     
     transmons, EC_matrix = quantize(circuit=circuit, n=n)
         
+    n_full = n_trunc ** len(transmons)
+    
     for k in range(len(transmons)):
         print(f"n['energy'][:2,:2]: ") 
         print(transmons[k].n["energy"][:2,:2])
@@ -862,7 +1136,7 @@ def main():
             ])}
     )
 
-    for i in range(100):
+    for i in range(1):
         system.state.reset_accumulated_unitary() 
         
         system.RY(k=0)
@@ -1012,7 +1286,7 @@ from Wavefunction import Wavefunction
 from constants import *
 
 class System():
-    def __init__(self, transmons: list[Transmon], EC_matrix: np.ndarray, thetas: np.ndarray, clock_multiplier: int, initial_state: Wavefunction, ramp: list[str], N_kicks: int, flux_schedule: np.ndarray):
+    def __init__(self, transmons: list[Transmon], EC_matrix: np.ndarray, thetas: np.ndarray, clock_multiplier: int, initial_state: Wavefunction, ramp: list[str], N_kicks: int):
         self.transmons     = transmons
         self.EC_matrix     = EC_matrix
         self.thetas        = thetas
@@ -1020,7 +1294,7 @@ class System():
         self.state         = initial_state  
         self.ramp          = ramp
         self.N_kicks       = N_kicks
-        self.flux_schedule = flux_schedule
+        self.coupling      = False
         
         self.n_full        = len(self.state["energy"]) # Dimension of full Hilbert space of the system
         self.n_trunc       = int(round(self.n_full**(1/len(self.transmons))))
@@ -1039,22 +1313,20 @@ class System():
         
         
         # ---- Truncate each transmon to n_trunc x n_trunc, then upgrade it to the n_full state space
+        print("Starting truncate/upgrade...")
         self.sys_transmons = self.sys_transmons = copy.deepcopy(self.transmons)
         
         for k in range(len(self.transmons)):
-            og_transmon  = self.transmons[k]
             sys_transmon = self.sys_transmons[k]
             
-            for label, operator in og_transmon.operators.items():
+            for label in list(sys_transmon.operators.keys()):
+                
                 sys_transmon.operators[label] = System.upgrade(
-                                operator=System.truncate(
-                                    operator=operator,
-                                    n_trunc=self.n_trunc
-                                ),
-                                n_trunc=self.n_trunc,
-                                idx=k,
-                                num_subsystems=len(self.transmons)
-                            )
+                    operator=System.truncate(sys_transmon.operators[label], self.n_trunc),
+                    n_trunc=self.n_trunc,
+                    idx=k,
+                    num_subsystems=len(self.transmons)
+                )
         
         # ---- Derive Qubit and Clock Periods ----
         self.T_q           = np.array([(2*np.pi) / t.qubit_angular_frequency for t in self.transmons]) # Qubit period [s]
@@ -1062,6 +1334,7 @@ class System():
         self.T_c           = self.T_q[0] / self.M                                                      # Clock period [s]
         
         # ---- Derive Kick Operators for Logical Qubits 1 (and 2)
+        print("Building kick operators...")
         self.transmon_to_kick = {}
         
         self.transmon_to_kick[0] = Operator(
@@ -1090,27 +1363,56 @@ class System():
                 operator=self.transmon_to_kick[2],
                 n_trunc=self.n_trunc,
                 idx=2,
-                num_sub_systems=len(self.transmons)
+                num_subsystems=len(self.transmons)
             )
         
         # ---- Derive Coupling Hamiltonain HC ----
+        print("Building coupling Hamiltonian...")
         coupling_sum = 0
         for k in range(len(self.transmons)):
             for l in range(len(self.transmons)):
                 if k == l:
                     continue
                 else:   
-                    coupling_sum += (self.sys_transmons[k].n["energy"] * self.EC_matrix[k][l] * self.sys_transmons[l].n["energy"])
+                    coupling_sum += (self.EC_matrix[k][l] * self.sys_transmons[k].operators["n"]["energy"] @ self.sys_transmons[l].operators["n"]["energy"])
                 
         self.HC = Operator(
             basis_to_matrix={"energy" : 4 * coupling_sum}
         )
         
         # ---- Derive the Unperturbed Hamiltonian H0 ----
+        print("Building H0...")
+        total_h0 = self.sys_transmons[0].operators["H0"]["energy"]
+        for t in self.sys_transmons[1:]:
+            total_h0 = total_h0 + t.operators["H0"]["energy"]
+
         self.H0 = Operator(
-            basis_to_matrix={"energy" : np.sum([t.H0["energy"] for t in self.sys_transmons]) + self.HC["energy"]}
+            basis_to_matrix={"energy": total_h0 + self.HC["energy"]}
         )
+        
+        print(f"n_full = {self.n_full}")
+        print(f"n_trunc = {self.n_trunc}")
+        print(f"H0 shape = {self.H0['energy'].shape}")
+        print(f"state length = {len(self.state['energy'])}")
+        
+        # ---- For single qubit case ----
+        print("Computing U1, UM...")
+        self.U1 = Operator(
+            basis_to_matrix={"energy": expm(-1j * self.H0["energy"] * (1 * self.T_c) / hbar)}
+        )
+        
+        self.UM = Operator(
+            basis_to_matrix={"energy": expm(-1j * self.H0["energy"] * (self.M * self.T_c) / hbar)}
+        )
+        
+        print("System init complete.")
                 
+    def switch_coupling(self):
+        if self.coupling == False:
+            self.coupling == True
+        else:
+            self.coupling == False
+        
     def free_evolve(self, clock_cycles: int):
         self.state.apply(
             operator=Operator(
@@ -1123,11 +1425,12 @@ class System():
         self.on_ramp_evolve(k)
                 
         for _ in range(self.N_kicks):
-            self.state.apply(self.transmon_to_kick[k]["energy"])
+            self.state.apply(self.transmon_to_kick[k])
             
-            self.free_evolve(
-                clock_cycles=self.M,
-            )
+            self.state.apply(self.UM)
+            # self.free_evolve(
+            #     clock_cycles=self.M,
+            # )
         
         self.off_ramp_evolve(k)
             
@@ -1137,13 +1440,13 @@ class System():
             for action in sequence:
                 if action == "0":
                     # free evolve for a single clock cycle
-                    self.free_evolve(clock_cycles=1)
+                    self.state.apply(self.U1)
                 else:
                     # kick
-                    self.state.apply(self.transmon_to_kick[k]["energy"])
+                    self.state.apply(self.transmon_to_kick[k])
 
                     # free evolve for a single clock cycle
-                    self.free_evolve(clock_cycles=1)
+                    self.state.apply(self.U1)
 
     def off_ramp_evolve(self, k: int):
         flipped_ramps = [self.flip_X_ramp(r) for r in self.ramp][::-1]
@@ -1152,13 +1455,13 @@ class System():
             for action in sequence:
                 if action == "0":
                     # free evolve for a single clock cycle
-                    self.free_evolve(clock_cycles=1)
+                    self.state.apply(self.U1)
                 else:
                     # kick
-                    self.state.apply(self.transmon_to_kick[k]["energy"])
+                    self.state.apply(self.transmon_to_kick[k])
 
                     # free evolve for a single clock cycle
-                    self.free_evolve(clock_cycles=1)
+                    self.state.apply(self.U1)
 
     @staticmethod
     def flip_X_ramp(ramp: str):
@@ -1229,7 +1532,7 @@ class Transmon(QuantumOscillator):
     """
     A Transmon system
     """
-    def __init__(self, EC: float, EJ_EC: float, n: int):
+    def __init__(self, EC: float, EJ_EC: float, PHI_off: np.ndarray, PHI_on: np.ndarray, n: int):
         self.EC = EC                       # Charging energy
         self.EJ = EJ_EC * self.EC          # Josephson energy
         self.r  = (1/2)*(EJ_EC / 2)**(1/4) # charge zero-point-fluctuation
@@ -1282,8 +1585,15 @@ class Transmon(QuantumOscillator):
             "V" : self.V,
             "H0": self.H0,
         }
-                        
+                       
+    @staticmethod
+    def calculate_effective_EJ(external_flux: float, JL: float, JR: float):
+        EJL = REDUCED_FLUX_QUANTUM * JL
+        EJR = REDUCED_FLUX_QUANTUM * JR
         
+        d   = (JR - JL) / (JR + JL)
+        
+        return (EJL + EJR) * np.cos(external_flux / (2 * REDUCED_FLUX_QUANTUM)) * np.sqrt(1 + (d**2) * (np.tan(external_flux / (2 * REDUCED_FLUX_QUANTUM))**2))
             
         
     
@@ -1420,8 +1730,8 @@ class Wavefunction():
     def apply(self, operator: Operator):        
         # Apply the operator to each basis representation of the wavefunction
         for basis, coefs in self.basis_to_coefs.items():
-            self.basis_to_coefs[basis] = (operator[basis] @ coefs.reshape(-1, 1)).flatten()
-            self.U[basis] = operator[basis] @ self.U[basis]
+            self.basis_to_coefs[basis] = (operator[basis] @ coefs).flatten()
+            # self.U[basis] = operator[basis] @ self.U[basis]
         
     def get_accumulated_unitary(self):
         return self.U

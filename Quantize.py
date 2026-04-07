@@ -7,12 +7,13 @@
 #
 ###############################################################################
 
+import numpy as np
 from constants import *
 from Transmon import Transmon
 from Circuit import Circuit
 
 
-def quantize(circuit: Circuit, n: int):
+def quantize(circuit: Circuit, PHI_off: np.ndarray, PHI_on: np.ndarray, n: int):
     """
     Parameters
     ----------
@@ -22,7 +23,7 @@ def quantize(circuit: Circuit, n: int):
         Hilbert-space dimension: Cooper-pair numbers run from -n to +n
         (charge basis), or Fock states 0..n_cut-1 (Fock basis).
     """
-    EC_matrix = e**2 / (2 * circuit.capacitance_matrix)
+    EC_matrix = (e**2 / 2) * circuit.inv_capacitance_matrix
     
     transmons = []
     
@@ -34,6 +35,8 @@ def quantize(circuit: Circuit, n: int):
         transmons.append(Transmon(
             EC=EC,
             EJ_EC=EJ_EC,
+            PHI_off=PHI_off,
+            PHI_on=PHI_on,
             n=n
         ))
         

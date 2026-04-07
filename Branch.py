@@ -1,7 +1,7 @@
 from __future__ import annotations
 from typing import Optional
 import numpy as np
-from constants import PHI_0
+from constants import REDUCED_FLUX_QUANTUM
 
 ######################################## NODE CLASS ########################################
 class Node:
@@ -78,7 +78,7 @@ class JosephsonElement(InductiveElement):
         self.EJ = josephson_energy
         
     def calculate_energy(self, branch_flux: float, branch_flux_offset: float):
-        return -self.EJ * np.cos( (branch_flux - branch_flux_offset) / PHI_0)
+        return -self.EJ * np.cos( (branch_flux - branch_flux_offset) / REDUCED_FLUX_QUANTUM)
 ######################################## JOSEPHSON ELEMENT CLASS ########################################
 
 ######################################## GRAPH CLASS ########################################
