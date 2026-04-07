@@ -36,7 +36,7 @@ class System():
         
         
         # ---- Truncate each transmon to n_trunc x n_trunc, then upgrade it to the n_full state space
-        print("Starting truncate/upgrade...")
+        # print("Starting truncate/upgrade...")
         self.sys_transmons = self.sys_transmons = copy.deepcopy(self.transmons)
         
         for k in range(len(self.transmons)):
@@ -57,7 +57,7 @@ class System():
         self.T_c           = self.T_q[0] / self.M                                                      # Clock period [s]
         
         # ---- Derive Kick Operators for Logical Qubits 1 (and 2)
-        print("Building kick operators...")
+        # print("Building kick operators...")
         self.transmon_to_kick = {}
         
         self.transmon_to_kick[0] = Operator(
@@ -90,7 +90,7 @@ class System():
             )
         
         # ---- Derive Coupling Hamiltonain HC ----
-        print("Building coupling Hamiltonian...")
+        # print("Building coupling Hamiltonian...")
         coupling_sum = 0
         for k in range(len(self.transmons)):
             for l in range(len(self.transmons)):
@@ -104,7 +104,7 @@ class System():
         )
         
         # ---- Derive the Unperturbed Hamiltonian H0 ----
-        print("Building H0...")
+        # print("Building H0...")
         total_h0 = self.sys_transmons[0].operators["H0"]["energy"]
         for t in self.sys_transmons[1:]:
             total_h0 = total_h0 + t.operators["H0"]["energy"]
@@ -113,13 +113,13 @@ class System():
             basis_to_matrix={"energy": total_h0 + self.HC["energy"]}
         )
         
-        print(f"n_full = {self.n_full}")
-        print(f"n_trunc = {self.n_trunc}")
-        print(f"H0 shape = {self.H0['energy'].shape}")
-        print(f"state length = {len(self.state['energy'])}")
+        # print(f"n_full = {self.n_full}")
+        # print(f"n_trunc = {self.n_trunc}")
+        # print(f"H0 shape = {self.H0['energy'].shape}")
+        # print(f"state length = {len(self.state['energy'])}")
         
         # ---- For single qubit case ----
-        print("Computing U1, UM...")
+        # print("Computing U1, UM...")
         self.U1 = Operator(
             basis_to_matrix={"energy": expm(-1j * self.H0["energy"] * (1 * self.T_c) / hbar)}
         )
@@ -128,7 +128,7 @@ class System():
             basis_to_matrix={"energy": expm(-1j * self.H0["energy"] * (self.M * self.T_c) / hbar)}
         )
         
-        print("System init complete.")
+        # print("System init complete.")
                 
     def switch_coupling(self):
         if self.coupling == False:

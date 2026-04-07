@@ -18,10 +18,11 @@ PLOT = True
 
 def main():
     # ---- Shared Hyper-parameters ----
-    n                  = 51            # Number of charge states, -n/2 : n/2 for each transmon
-    n_trunc            = 3              # number of states to truncate to for each transmon
+    n                  = 201            # Number of charge states, -n/2 : n/2 for each transmon
+    n_trunc            = 7              # number of states to truncate to for each transmon
     clock_multiplier   = 8
-    ramp               = ['01000000', '11000000', '10000000', '00000000', '00000000']
+    ramp               = ['10000000', '10000000']
+    ramp               = []
     
     # ---- Transmon Circuit Hyper-parameters ----
     THETAS  = np.array([np.pi/100, np.pi/100])
@@ -42,6 +43,9 @@ def main():
     C1c = 2 * 1e-15    # [F]
     C2c = 2 * 1e-15    # [F]
     
+    C1e = 7.5 * 1e-15  # [F]
+    C2e = 7.5 * 1e-15  # [F]
+    
     # ---- Graph Representation of the Transmon Circuit ----
     EJ1 = Transmon.calculate_effective_EJ(external_flux=PHI_off[0], JL=J1L, JR=J1R)
     EJc = Transmon.calculate_effective_EJ(external_flux=PHI_off[1], JL=JcL, JR=JcR)
@@ -51,11 +55,13 @@ def main():
         'nodes': ['q1', 'c', 'q2'],
         'capacitors': [
             ('q1', 'gnd', C1),
+            ('q1', 'gnd', C1e),
             ('q1', 'c', C1c),
             ('q1', 'q2', C12),
             ('c', 'gnd', Cc),
             ('c', 'q2', C2c),
             ('q2', 'gnd', C2),
+            ('q2', 'gnd', C2e),
         ],
         'inductors': [],
         'josephson_elements': [
@@ -74,12 +80,18 @@ def main():
     
     print(f"Full Hilbert space dimension: {n_full}")
     
-    # ---- Create Quantum States |0>, |1>, ----
-    zero = Wavefunction(basis_to_coefs={"energy" : np.array([1] + (n_full - 1) * [0])})
-    one  = Wavefunction(basis_to_coefs={"energy" : np.array([0] + [1] + (n_full - 2) * [0])})
+    # ---- Create individual Subsystem Quantum Basis States ----
+    z = Wavefunction(basis_to_coefs={"energy" : np.array([1] + (n_trunc - 1) * [0])})
+    o = Wavefunction(basis_to_coefs={"energy" : np.array([0] + [1] + (n_trunc - 2) * [0])})
     
-    # ---- Creating Our Initial Quantum State in Energy basis, |00> ----
-    initial_state = Wavefunction(basis_to_coefs={"energy" : zero["energy"].copy()})
+    # ---- Create Full Subsystem Quantum Basis States ----
+    zzz     = Wavefunction(basis_to_coefs={"energy" : np.kron(np.kron(z["energy"], z["energy"]), z["energy"])}) # |000>
+    zzo     = Wavefunction(basis_to_coefs={"energy" : np.kron(np.kron(z["energy"], z["energy"]), o["energy"])}) # |001>
+    ozz     = Wavefunction(basis_to_coefs={"energy" : np.kron(np.kron(o["energy"], z["energy"]), z["energy"])}) # |100>
+    ozo     = Wavefunction(basis_to_coefs={"energy" : np.kron(np.kron(o["energy"], z["energy"]), o["energy"])}) # |101>
+    
+    # ---- Creating Our Initial Quantum State in Energy basis ----
+    initial_state = Wavefunction(basis_to_coefs={"energy" : zzz["energy"].copy()})
     
     if PLOT:
         plt.ion()
@@ -102,8 +114,12 @@ def main():
     # Target Unitary rotation
     theta_target = np.pi/2
     
+    # Qubit to rotate
+    k = 0
+    
     # Number of kicks in pulse train
     N_kicks = 47
+    N_kicks = int(np.round(theta_target / THETAS[0]))
     
     system = System(
         transmons=transmons,
@@ -115,6 +131,7 @@ def main():
         N_kicks=N_kicks,
     )
     
+    # Target Unitary on the computational subspace of a single qubit
     RY_TARGET = Operator(
         basis_to_matrix={"energy": np.array([
                 [np.cos(theta_target / 2), -np.sin(theta_target / 2)],
@@ -122,28 +139,70 @@ def main():
             ])}
     )
 
-    for i in range(100):
-        # system.state.reset_accumulated_unitary() 
+    for i in range(1):
+        system.state.reset_accumulated_unitary() 
+        
         print("Applying RY")
-        system.RY(k=0)
+        system.RY(k)
         
-        # U = system.state.get_accumulated_unitary()
+        # (n_full x n_full)
+        U = system.state.get_accumulated_unitary()
 
-        # U_Q = Operator(
-        #     basis_to_matrix={"energy": U["energy"][:2, :2]}
-        # )
+        # NOTE: The logical bit strings are in base n_trunc, i.e.
+        # |b2, b1, b0> = b2 * (n_trunc**2) + b1 * (n_trunc**1) + b0 * (n_trunc**0)
+        # len(|b2, b1, b0>) = n_trunc**3
         
-        # L1 = get_L1(U=U_Q, basis="energy")
         
-        # # print(f"Leakage Metric: {leakage}")
-        # process_fidelity = get_process_fidelity(U_Q=U_Q, U_target=RY_TARGET, basis="energy")
-        # # print(f"Process Fidelity: {process_fidelity}")
-        # avg_gate_fidelity = get_average_gate_fidelity(process_fidelity=process_fidelity, L1=L1)
-        # # print(f"Average Gate Fidelity in the Absence of a Loss Channel: {avg_gate_fidelity}")
-        # print(f"L1: {L1}")
-        # r = np.linalg.norm(get_pauli_coefs(U=U_Q, basis="energy"))
-        # print(f"r: {r}")
-        # print(f"Fidelity: {avg_gate_fidelity}")
+        
+        # ---- Calculate Gate Fidelity for Qubit 0 ----
+        # Want to project onto the first k=0 qubit computational subspace
+        # Want P|psi> = a|000> + b|100>
+        # (n_full x n_full)
+        P_0 = Operator(
+            basis_to_matrix={
+                "energy": np.outer(to_ket(zzz["energy"]), to_bra(zzz["energy"])) + \
+                            np.outer(to_ket(ozz["energy"]), to_bra(ozz["energy"]))
+                }
+        )
+        # (n_full x n_full)
+        U_Q0 = Operator(
+            basis_to_matrix={"energy": P_0["energy"] @ U["energy"] @ P_0["energy"]}
+        )
+        idx_0 = [0, n_trunc**2]
+        # (2 x 2)
+        U_Q0_2x2 = Operator(
+            basis_to_matrix={"energy": U_Q0["energy"][np.ix_(idx_0, idx_0)]}
+        )
+        L1_0 = get_L1(U=U_Q0_2x2, basis="energy")
+        process_fidelity_0 = get_process_fidelity(U_Q=U_Q0_2x2, U_target=RY_TARGET, basis="energy")
+        avg_gate_fidelity_0 = get_average_gate_fidelity(process_fidelity=process_fidelity_0, L1=L1_0)
+        r_0 = np.linalg.norm(get_pauli_coefs(U=U_Q0_2x2, basis="energy"))
+        print(f"Gate on Qubit {0} Fidelity: {avg_gate_fidelity_0}")
+        
+        # ---- Calculate Gate Fidelity for Qubit 2 ----
+        # Want to project onto the second k=2 qubit computational subspace
+        # Want P|psi> = a|000> + b|001>
+        # (n_full x n_full)
+        P_2 = Operator(
+            basis_to_matrix={
+                "energy": np.outer(to_ket(zzz["energy"]), to_bra(zzz["energy"])) + \
+                            np.outer(to_ket(zzo["energy"]), to_bra(zzo["energy"]))
+                }
+        )
+        # (n_full x n_full)
+        U_Q2 = Operator(
+            basis_to_matrix={"energy": P_2["energy"] @ U["energy"] @ P_2["energy"]}
+        )
+        idx_2 = [0, n_trunc**0]
+        # (2 x 2)
+        U_Q2_2x2 = Operator(
+            basis_to_matrix={"energy": U_Q2["energy"][np.ix_(idx_2, idx_2)]}
+        )
+        L1_2 = get_L1(U=U_Q2_2x2, basis="energy")
+        process_fidelity_2 = get_process_fidelity(U_Q=U_Q2_2x2, U_target=Operator(basis_to_matrix={"energy": np.eye(2)}), basis="energy")
+        avg_gate_fidelity_2 = get_average_gate_fidelity(process_fidelity=process_fidelity_2, L1=L1_2)
+        r_2 = np.linalg.norm(get_pauli_coefs(U=U_Q2_2x2, basis="energy"))
+        print(f"Gate on Qubit {2} Fidelity: {avg_gate_fidelity_2}")
         
         probabilities = system.state.get_probabilities("energy")
                 
@@ -157,15 +216,15 @@ def main():
         
         rho_1 = A @ A.conj().T
         
-        x = np.trace(rho_1[:2, :2] @ X).real
-        y = np.trace(rho_1[:2, :2] @ Y).real
-        z = np.trace(rho_1[:2, :2] @ Z).real
+        bx = np.trace(rho_1[:2, :2] @ X).real
+        by = np.trace(rho_1[:2, :2] @ Y).real
+        bz = np.trace(rho_1[:2, :2] @ Z).real
         
         if PLOT:
             
-            bx_hist.append(x)
-            by_hist.append(y)
-            bz_hist.append(z)
+            bx_hist.append(bx)
+            by_hist.append(by)
+            bz_hist.append(bz)
             
             # ---- Bloch Sphere ----
             ax_bloch.cla()
@@ -186,8 +245,8 @@ def main():
             ax_bloch.text(1.15, 0, 0, "X", ha='center', fontsize=10, color='gray')
             ax_bloch.text(0, 1.15, 0, "Y", ha='center', fontsize=10, color='gray')
             
-            ax_bloch.quiver(0, 0, 0, x, y, z, color='red', arrow_length_ratio=0.08, linewidth=2.5)
-            ax_bloch.scatter([x], [y], [z], color='red', s=40, zorder=5)
+            ax_bloch.quiver(0, 0, 0, bx, by, bz, color='red', arrow_length_ratio=0.08, linewidth=2.5)
+            ax_bloch.scatter([bx], [by], [bz], color='red', s=40, zorder=5)
             
             ax_bloch.set_xlim([-1.3, 1.3])
             ax_bloch.set_ylim([-1.3, 1.3])
@@ -202,7 +261,7 @@ def main():
             circle = plt.Circle((0, 0), 1, fill=False, color='gray', linewidth=0.5)
             ax_xy.add_patch(circle)
             ax_xy.plot(bx_hist, by_hist, color='blue', alpha=0.3, linewidth=1)
-            ax_xy.scatter([x], [y], color='red', s=50, zorder=5)
+            ax_xy.scatter([bx], [by], color='red', s=50, zorder=5)
             ax_xy.axhline(0, color='gray', linewidth=0.3)
             ax_xy.axvline(0, color='gray', linewidth=0.3)
             ax_xy.set_xlim([-1.3, 1.3])
@@ -217,7 +276,7 @@ def main():
             circle = plt.Circle((0, 0), 1, fill=False, color='gray', linewidth=0.5)
             ax_xz.add_patch(circle)
             ax_xz.plot(bx_hist, bz_hist, color='blue', alpha=0.3, linewidth=1)
-            ax_xz.scatter([x], [z], color='red', s=50, zorder=5)
+            ax_xz.scatter([bx], [bz], color='red', s=50, zorder=5)
             ax_xz.axhline(0, color='gray', linewidth=0.3)
             ax_xz.axvline(0, color='gray', linewidth=0.3)
             ax_xz.set_xlim([-1.3, 1.3])
@@ -232,7 +291,7 @@ def main():
             circle = plt.Circle((0, 0), 1, fill=False, color='gray', linewidth=0.5)
             ax_yz.add_patch(circle)
             ax_yz.plot(by_hist, bz_hist, color='blue', alpha=0.3, linewidth=1)
-            ax_yz.scatter([y], [z], color='red', s=50, zorder=5)
+            ax_yz.scatter([by], [bz], color='red', s=50, zorder=5)
             ax_yz.axhline(0, color='gray', linewidth=0.3)
             ax_yz.axvline(0, color='gray', linewidth=0.3)
             ax_yz.set_xlim([-1.3, 1.3])
