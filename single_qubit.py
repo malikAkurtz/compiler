@@ -13,6 +13,7 @@ from Circuit import Circuit
 from Quantize import quantize
 from Branch import *
 from DCSQUID import DCSQUID
+from TransmonCircuit import TransmonCircuit
 
 PLOT = True
 
@@ -30,21 +31,32 @@ def main():
     
     # ---- Derived Physical Constants ----
     EJ    = EJ_EC * EC
+    JL    = EJ / (2 * REDUCED_FLUX_QUANTUM)
+    JR    = EJ / (2 * REDUCED_FLUX_QUANTUM)
     n_zpf = (1/2) * (EJ_EC / 2)**(1/4) # approximation
-    BETAS  = THETAS / (2 * n_zpf)        # approximation
+    BETAS = THETAS / (2 * n_zpf)        # approximation
     C_T   = e**2 / (2 * EC)            # includes Josephson Capacitance CJ
     CC    = (BETAS[0] * hbar * C_T) / FLUX_QUANTUM
     C     = C_T - CC
     
-    C  = 7.748091729863649e-14
-    CC = 4.891271340097761e-35
-    EJ = 1.142997100875e-23
-    
     # ---- Create Ground Node ----
     gnd = Node(label="gnd", branches=[])
     
-    # ---- Create Nodes and Branches of Each DCSQUID Circuit ----
-    q1 = DCSQUID(gnd=gnd, C_S=C, EJ_eff=EJ, C_JL=0, C_JR=0, C_C=CC) # C_JL, C_JR are embedded in C_S
+    # ---- Create Nodes and Branches of Each DCSQUID Circuit (C_JL, C_JR are embedded in C_S) ----
+    q1_dcsquid = DCSQUID(
+        gnd=gnd,
+        PHI_ext=0,
+        JL=JL,
+        JR=JR,
+        C_JL=0,
+        C_JR=0,
+        C_C=CC
+    )
+    
+    q1 = TransmonCircuit(
+        C_S=C,
+        dcsquid=q1_dcsquid
+    )
 
     # ---- Create the Larger Circuit Graph Object (G = (V, E)) ----
     circuit_graph = Graph(vertices=[gnd, q1.island], edges=q1.branches)

@@ -64,16 +64,7 @@ class Transmon(QuantumOscillator):
             "H0": self.H0,
         }
                        
-    @staticmethod
-    def calculate_effective_EJ(external_flux: float, JL: float, JR: float):
-        EJL = REDUCED_FLUX_QUANTUM * JL
-        EJR = REDUCED_FLUX_QUANTUM * JR
-        
-        d   = (JR - JL) / (JR + JL)
-        
-        return (EJL + EJR) * np.cos(external_flux / (2 * REDUCED_FLUX_QUANTUM)) * np.sqrt(1 + (d**2) * (np.tan(external_flux / (2 * REDUCED_FLUX_QUANTUM))**2))
-            
-        
+
     
     
     
