@@ -304,6 +304,7 @@ class Circuit:
             inductance = -1 / self.inv_inductance_matrix[j][k]
             ext_term += ((node_flux[j] - node_flux[k]) * offset) / inductance
 
+        # NOTE: THIS IS WRONG
         # Josephson (nonlinear) term
         jj_term = 0
         for jj in self.josephson_elements:
@@ -311,7 +312,7 @@ class Circuit:
             n2_label = jj.nodes[1].label
             phi1 = node_flux[self.labels.index(n1_label)] if n1_label != "gnd" else 0
             phi2 = node_flux[self.labels.index(n2_label)] if n2_label != "gnd" else 0
-            jj_term += -jj.EJ * np.cos((phi1 - phi2) / PHI_0)
+            jj_term += -jj.EJ * np.cos((phi1 - phi2) / REDUCED_FLUX_QUANTUM)
 
         return linear_term + ext_term + jj_term
 
@@ -359,6 +360,26 @@ from scipy.constants import h, hbar, e
 # Reduced Flux Quantum
 REDUCED_FLUX_QUANTUM = hbar / (2 * e)   # reduced flux quantum, for dimensionless phase
 FLUX_QUANTUM         = h / (2 * e)      # physical flux quantum, for SFQ kick angle
+
+
+================ DCSQUID.py ================
+
+from Branch import *
+from Circuit import Circuit
+
+class DCSQUID(Circuit):
+    def __init__(self, nodes: list[Node], C_S: Capacitor, L_JL: InductiveElement, L_JR: InductiveElement, C_JL: Capacitor, C_JR: Capacitor):
+        graph_rep = {
+        'nodes': ['a'],
+        'capacitors': [
+            ('a', 'gnd', C),  # Shunt capacitor
+            ('a', 'gnd', CC), # Coupling capacitor
+        ],
+        'inductors': [],
+        'josephson_elements': [
+            ('a', 'gnd', EJ),
+        ],
+    }
 
 
 ================ fidelity.py ================
@@ -934,100 +955,6 @@ Z = np.array([
 PAULI_MATRICES = [I, X, Y, Z]
 
 
-================ playground.py ================
-import numpy as np
-# np.set_printoptions(precision=2, suppress=True)
-
-from scipy.linalg import expm
-import matplotlib.pyplot as plt
-
-from System import System
-from HarmonicOscillator import HarmonicOscillator
-from SFQDriver import SFQDriver
-from Wavefunction import Wavefunction
-from utils import *
-from constants import *
-from fidelity import *
-from itertools import combinations
-
-def main():
-    A = np.array([
-        [0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0], # obj
-        [-1, -1, 0, 0, 0, 1, 0, 0, 0, 0, 0], # s1
-        [1, 0, -1, -1, 0, 0, 1, 0, 0, 0, 0], # s2
-        [0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 3], # w
-        [0, 1, 1, 0, -1, 0, 0, 0, 1, 0, 3], # a1
-        [0, 0, 0, 1, 1, 0, 0, 0, 0, 1, 5] # a2
-    ])
-    print("Initial Tableu: ")
-    print(A)
-    
-    A[3] = A[3] + (-1 * A[2])
-
-    A[0] = A[0] - A[4]
-    A[0] = A[0] - A[5]
-    
-    print("After initial preparation: ")
-    print(A)
-    
-    A[0] = A[0] + A[4]
-    A[1] = A[1] + A[4]
-    
-    print("After first pivot: ")
-    print(A)
-    
-    A[2] = A[2] + A[3]
-    A[0] = A[0] + A[3]
-    A[5] = A[5] - A[3]
-    
-    print("After second pivot: ")
-    print(A)
-    
-    A[0] = A[0] + A[5]
-    A[1] = A[1] + A[5]
-    A[3] = A[3] + A[5]
-    
-    print("After third pivot: ")
-    print(A)
-    
-    print("Done Phase 1")
-    
-    A = np.delete(A, 8, axis=1)  # remove a1 column
-    A = np.delete(A, 8, axis=1)  # remove a2 column (now shifted)
-    
-    A[0] = np.array([3, 5, 1, 1, -2, 2, 4, 0, 0])
-    
-    print("After getting rid of artifical obj row and cols: ")
-    print(A)
-    
-    A[0] = A[0] + (-3 * A[5])
-    A[0] = A[0] + (-5 * A[4])
-    A[0] = A[0] + (-1 * A[3])
-    A[0] = A[0] + (-2 * A[1])
-    A[0] = A[0] + (-4 * A[2])
-    
-    print("After zeroing obj row corresponding to basic vars: ")
-    print(A)
-    
-    A[5] = A[5] + A[4]
-    A[0] = A[0] + A[4]
-    
-    print("After first pivot: ")
-    print(A)
-    
-    A[0] = A[0] + (2*A[3])
-    A[4] = A[4] + (A[3])
-    
-    print("After second pivot: ")
-    print(A)
-    
-    # A = np.insert(A, 0, np.array([3, 5, 1, 1, -2, 2, 4, 0]), axis=0)
-    
-if __name__=="__main__":
-    
-    main()
-
-
 ================ Quantize.py ================
 ###############################################################################
 #
@@ -1275,7 +1202,7 @@ def main():
     EJ    = EJ_EC * EC
     n_zpf = (1/2) * (EJ_EC / 2)**(1/4) # approximation
     BETAS  = THETAS / (2 * n_zpf)        # approximation
-    C_T   = e**2 / (2 * EC)
+    C_T   = e**2 / (2 * EC)            # includes Josephson Capacitance CJ
     CC    = (BETAS[0] * hbar * C_T) / FLUX_QUANTUM
     C     = C_T - CC
     
@@ -1294,7 +1221,6 @@ def main():
         'josephson_elements': [
             ('a', 'gnd', EJ),
         ],
-        'external_flux': {}
     }
     
     

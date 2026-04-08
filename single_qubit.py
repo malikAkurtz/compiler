@@ -11,13 +11,15 @@ from constants import *
 from fidelity import *
 from Circuit import Circuit
 from Quantize import quantize
+from Branch import *
+from DCSQUID import DCSQUID
 
 PLOT = True
 
 def main():
     # ---- Shared Hyper-parameters ----
-    n                  = 101            # Number of charge states, -n/2 : n/2 for each transmon
-    n_trunc            = 5              # number of states to truncate to for each transmon
+    n                  = 201            # Number of charge states, -n/2 : n/2 for each transmon
+    n_trunc            = 7              # number of states to truncate to for each transmon
     clock_multiplier   = 8
     ramp               = ['01000000', '11000000', '10000000', '00000000', '00000000']
     
@@ -30,7 +32,7 @@ def main():
     EJ    = EJ_EC * EC
     n_zpf = (1/2) * (EJ_EC / 2)**(1/4) # approximation
     BETAS  = THETAS / (2 * n_zpf)        # approximation
-    C_T   = e**2 / (2 * EC)
+    C_T   = e**2 / (2 * EC)            # includes Josephson Capacitance CJ
     CC    = (BETAS[0] * hbar * C_T) / FLUX_QUANTUM
     C     = C_T - CC
     
@@ -38,24 +40,19 @@ def main():
     CC = 4.891271340097761e-35
     EJ = 1.142997100875e-23
     
-    # ---- Graph Representation of the Transmon Circuit ----
-    graph_rep = {
-        'nodes': ['a'],
-        'capacitors': [
-            ('a', 'gnd', C),  # Shunt capacitor
-            ('a', 'gnd', CC), # Coupling capacitor
-        ],
-        'inductors': [],
-        'josephson_elements': [
-            ('a', 'gnd', EJ),
-        ],
-        'external_flux': {}
-    }
+    # ---- Create Ground Node ----
+    gnd = Node(label="gnd", branches=[])
     
+    # ---- Create Nodes and Branches of Each DCSQUID Circuit ----
+    q1 = DCSQUID(gnd=gnd, C_S=C, EJ_eff=EJ, C_JL=0, C_JR=0, C_C=CC) # C_JL, C_JR are embedded in C_S
+
+    # ---- Create the Larger Circuit Graph Object (G = (V, E)) ----
+    circuit_graph = Graph(vertices=[gnd, q1.island], edges=q1.branches)
     
-    circuit = Circuit(graph_rep=graph_rep)
+    # ---- Create Circuit Object From Graph ----
+    circuit = Circuit(circuit_graph)
     
-    transmons, EC_matrix = quantize(circuit=circuit, n=n)
+    transmons, EC_matrix = quantize(circuit=circuit, n=n, PHI_off=[], PHI_on=[])
         
     n_full = n_trunc ** len(transmons)
     
@@ -109,7 +106,6 @@ def main():
         initial_state=initial_state,
         ramp=ramp,
         N_kicks=N_kicks,
-        flux_schedule=[]
     )
     
     RY_TARGET = Operator(

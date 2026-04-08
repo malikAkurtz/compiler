@@ -86,4 +86,70 @@ class Graph:
     def __init__(self, vertices: list[Node], edges: list[Branch]):
         self.vertices = vertices
         self.edges = edges
+    
+    @staticmethod
+    def construct_graph(graph_rep: dict) -> Graph:
+        """
+        Build the full Graph object from the user-supplied dictionary.
+        Also breaks symmetry by adding a tiny capacitor to ground for
+        any node that lacks a capacitive branch.
+        """
+        gnd = Node(label="gnd", branches=None)
+        label_to_node = {"gnd": gnd}
+        branches = []
+
+        # Create the node objects from the circuit dictionary
+        for label in graph_rep["nodes"]: # gnd not included
+            label_to_node[label] = Node(label=label, branches=None)
+
+        # Create the capacitor objects from the circuit dictionary
+        # and add it to the appropriate nodes
+        for (node1_label, node2_label, capacitance) in graph_rep['capacitors']:
+            node1 = label_to_node[node1_label]
+            node2 = label_to_node[node2_label]
+            
+            capacitor = Capacitor(capacitance=capacitance, nodes=(node1, node2))
+            
+            branches.append(capacitor)
+            node1.branches.append(capacitor)
+            node2.branches.append(capacitor)
+            
+        # Create the linear inductor objects from the circuit dictionary
+        # and add it to the appropriate nodes
+        for (node1_label, node2_label, inductance) in graph_rep['inductors']:
+            node1 = label_to_node[node1_label]
+            node2 = label_to_node[node2_label]
+            
+            inductor = Inductor(inductance=inductance, nodes=(node1, node2))
+            
+            branches.append(inductor)
+            node1.branches.append(inductor)
+            node2.branches.append(inductor)
+
+        # Create the Josephson element objects from the circuit dictionary
+        # and add it to the appropriate nodes
+        for (node1_label, node2_label, josephson_energy) in graph_rep['josephson_elements']:
+            node1 = label_to_node[node1_label]
+            node2 = label_to_node[node2_label]
+            
+            josephson_element = JosephsonElement(josephson_energy=josephson_energy, nodes=(node1, node2))
+            
+            branches.append(josephson_element)
+            node1.branches.append(josephson_element)
+            node2.branches.append(josephson_element)
+
+        # Break symmetry: add tiny parasitic capacitor to ground for nodes with no
+        # capacitive branch (prevents singular capacitance matrix)
+        for node in label_to_node.values():
+            if node.label == "gnd":
+                continue
+            has_capacitor = any(isinstance(b, CapacitiveElement) for b in node.branches)
+            if not has_capacitor:
+                capacitor = Capacitor(capacitance=1e-20, nodes=(node, gnd))
+                
+                branches.append(capacitor)
+                node.branches.append(capacitor)
+                gnd.branches.append(capacitor)
+
+        return Graph(list(label_to_node.values()), branches)
 ######################################## GRAPH CLASS ########################################

@@ -22,19 +22,6 @@ class System():
         self.n_full        = len(self.state["energy"]) # Dimension of full Hilbert space of the system
         self.n_trunc       = int(round(self.n_full**(1/len(self.transmons))))
         
-        # ---- Create Projectors for each individual qubit subspace ----
-        
-        # self.projectors = [
-        #     System.create_projector(
-        #         bases=["energy"], 
-        #         n_trunc=self.n_trunc,
-        #         ind=k,
-        #         num_subsystems=len(self.transmons)
-        #         )
-        #     for k in range(len(self.transmons))
-        #     ]
-        
-        
         # ---- Truncate each transmon to n_trunc x n_trunc, then upgrade it to the n_full state space
         # print("Starting truncate/upgrade...")
         self.sys_transmons = self.sys_transmons = copy.deepcopy(self.transmons)
@@ -220,23 +207,4 @@ class System():
                     
             upgraded_basis_to_matrix[basis] = upgraded_matrix
                 
-        return Operator(upgraded_basis_to_matrix)
-    
-    # NOTE: THIS IS WRONG 
-    # @staticmethod
-    # def create_projector(bases: list[str], n_trunc: int, idx: int, num_subsystems: int):
-    #     projected_basis_to_matrix = {}
-        
-    #     for basis in bases:
-    #         p = 1.0
-            
-    #         for k in range(num_subsystems): 
-    #             if k == idx:
-    #                 upgraded_matrix = np.kron(p, np.eye(n_trunc))
-    #             else:
-    #                 upgraded_matrix = np.kron(upgraded_matrix, np.zeros((n_trunc, n_trunc)))
-                    
-    #         projected_basis_to_matrix[basis] = p
-                
-    #     return Operator(projected_basis_to_matrix)
-        
+        return Operator(upgraded_basis_to_matrix)        
