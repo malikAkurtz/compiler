@@ -87,61 +87,11 @@ class Graph:
     def __init__(self, vertices: list[Node], edges: list[Branch]):
         self.vertices = vertices
         self.edges = edges
-######################################## GRAPH CLASS ########################################
-
-
-================ Circuit.py ================
-###############################################################################
-#
-#   Circuit.py
-#
-#   Builds a circuit graph from a user-defined topology and constructs the
-#   capacitance and inductance matrices.
-#
-###############################################################################
-
-import numpy as np
-from Branch import *
-
-###############################################################################
-#
-#   Circuit Class
-#
-###############################################################################
-
-class Circuit:
-    """
-    Represents a superconducting circuit as a graph.
-    Responsibilities: graph construction, capacitance/inductance matrices,
-    and classical energy functions.
-    """
-
-    # =====================================================================
-    #   Constructor
-    # =====================================================================
-
-    def __init__(self, graph_rep: dict):
-        self.labels                                           = graph_rep["nodes"]
-        self.circuit_graph                                    = Circuit._build_master_graph(graph_rep)
-        self.capacitive_sub_graph, self.inductive_sub_graph   = self._build_sub_graphs()
-        self.josephson_elements                               = [e for e in self.inductive_sub_graph.edges if isinstance(e, JosephsonElement)]
-        self.active_nodes, self.passive_nodes                 = self._partition_nodes()
-        self.N                                                = len(self.active_nodes)
-        self.P                                                = len(self.active_nodes) + len(self.passive_nodes) + 1 # + 1 for ground
-        self.capacitance_matrix, self.inv_inductance_matrix   = self._build_matrices()
-        self.inv_capacitance_matrix                           = np.linalg.inv(self.capacitance_matrix)
-        self.offset_dict                                      = graph_rep["external_flux"]
-        self.omega_squared                                    = self._build_omega_squared()
-        self.normal_modes_squared, self.normal_vecs_squared   = np.linalg.eig(self.omega_squared)
-
-    # =====================================================================
-    #   Graph Construction
-    # =====================================================================
-
+    
     @staticmethod
-    def _build_master_graph(graph_rep: dict) -> Graph:
+    def construct_graph(graph_rep: dict) -> Graph:
         """
-        Build the full circuit graph from the user-supplied dictionary.
+        Build the full Graph object from the user-supplied dictionary.
         Also breaks symmetry by adding a tiny capacitor to ground for
         any node that lacks a capacitive branch.
         """
@@ -203,6 +153,47 @@ class Circuit:
                 gnd.branches.append(capacitor)
 
         return Graph(list(label_to_node.values()), branches)
+######################################## GRAPH CLASS ########################################
+
+
+================ Circuit.py ================
+###############################################################################
+#
+#   Circuit.py
+#
+#   Builds a circuit graph from a user-defined topology and constructs the
+#   capacitance and inductance matrices.
+#
+###############################################################################
+
+import numpy as np
+from Branch import *
+
+###############################################################################
+#
+#   Circuit Class
+#
+###############################################################################
+
+class Circuit:
+    """
+    Represents a superconducting circuit as a graph.
+    Responsibilities: graph construction, capacitance/inductance matrices,
+    """
+    # =====================================================================
+    #   Constructor
+    # =====================================================================
+
+    def __init__(self, graph: Graph):
+        self.circuit_graph                                    = graph
+        self.labels                                           = [v.label for v in graph.vertices]
+        self.capacitive_sub_graph, self.inductive_sub_graph   = self._build_sub_graphs()
+        self.josephson_elements                               = [e for e in self.inductive_sub_graph.edges if isinstance(e, JosephsonElement)]
+        self.active_nodes, self.passive_nodes                 = self._partition_nodes()
+        self.N                                                = len(self.active_nodes)
+        self.P                                                = len(self.active_nodes) + len(self.passive_nodes) + 1 # + 1 for ground
+        self.capacitance_matrix, self.inv_inductance_matrix   = self._build_matrices()
+        self.inv_capacitance_matrix                           = np.linalg.inv(self.capacitance_matrix)
 
     # =====================================================================
     #   Sub-Graph Construction
@@ -228,6 +219,7 @@ class Circuit:
         active, passive = [], []
         
         for node in self.circuit_graph.vertices:
+            # Ground node is neither active nor passive
             if node.label == "gnd":
                 continue
             
@@ -251,14 +243,15 @@ class Circuit:
         Build the reduced (ground row/column removed) capacitance and
         inverse-inductance matrices using the graph-Laplacian approach.
         """
+        # print(f"P: {self.P}")
         capacitance_matrix        = np.zeros((self.P, self.P))
         inverse_inductance_matrix = np.zeros((self.P, self.P))
 
         for branch in self.circuit_graph.edges:
             node1_label = branch.nodes[0].label
             node2_label = branch.nodes[1].label
-            i = 0 if node1_label == "gnd" else self.labels.index(node1_label) + 1 # + 1 to account for gnd being absent in labels
-            j = 0 if node2_label == "gnd" else self.labels.index(node2_label) + 1
+            i = self.labels.index(node1_label)
+            j = self.labels.index(node2_label)
 
             if isinstance(branch, Capacitor):
                 capacitance_matrix[i][j] -= branch.C
@@ -276,60 +269,6 @@ class Circuit:
         inverse_inductance_matrix = np.delete(np.delete(inverse_inductance_matrix, 0, axis=0), 0, axis=1)
         
         return capacitance_matrix, inverse_inductance_matrix
-
-    # =====================================================================
-    #   Classical Mechanics Helpers
-    # =====================================================================
-
-    def _get_node_flux_dot(self, node_charge):
-        return self.inv_capacitance_matrix @ node_charge
-
-    def get_kinetic_energy(self, node_charge):
-        node_flux_dot = self._get_node_flux_dot(node_charge)
-        return (node_flux_dot.T @ self.capacitance_matrix @ node_flux_dot) / 2
-
-    def get_potential_energy(self, node_flux: np.ndarray):
-        """Total potential energy = linear (inductive) + nonlinear (Josephson)."""
-        # Linear inductive term
-        if self.inv_inductance_matrix.size > 0 and np.any(self.inv_inductance_matrix != 0):
-            linear_term = (node_flux.T @ self.inv_inductance_matrix @ node_flux) / 2
-        else:
-            linear_term = 0
-
-        # External flux correction
-        ext_term = 0
-        for (n1_label, n2_label), offset in self.offset_dict.items():
-            j = self.labels.index(n1_label)
-            k = self.labels.index(n2_label)
-            inductance = -1 / self.inv_inductance_matrix[j][k]
-            ext_term += ((node_flux[j] - node_flux[k]) * offset) / inductance
-
-        # NOTE: THIS IS WRONG
-        # Josephson (nonlinear) term
-        jj_term = 0
-        for jj in self.josephson_elements:
-            n1_label = jj.nodes[0].label
-            n2_label = jj.nodes[1].label
-            phi1 = node_flux[self.labels.index(n1_label)] if n1_label != "gnd" else 0
-            phi2 = node_flux[self.labels.index(n2_label)] if n2_label != "gnd" else 0
-            jj_term += -jj.EJ * np.cos((phi1 - phi2) / REDUCED_FLUX_QUANTUM)
-
-        return linear_term + ext_term + jj_term
-
-    def get_hamiltonian(self, node_flux, node_charge):
-        return 0.5 * (node_charge.T @ self.inv_capacitance_matrix @ node_charge) + self.get_potential_energy(node_flux)
-
-    def get_lagrangian(self, node_flux, node_charge):
-        return self.get_kinetic_energy(node_charge) - self.get_potential_energy(node_flux)
-
-    # =====================================================================
-    #   Normal Mode Analysis
-    # =====================================================================
-
-    def _build_omega_squared(self):
-        if np.any(self.inv_inductance_matrix != 0):
-            return self.inv_capacitance_matrix @ self.inv_inductance_matrix
-        return np.zeros((self.N, self.N))
 
     # =====================================================================
     #   Connectivity Display
@@ -365,21 +304,53 @@ FLUX_QUANTUM         = h / (2 * e)      # physical flux quantum, for SFQ kick an
 ================ DCSQUID.py ================
 
 from Branch import *
-from Circuit import Circuit
 
-class DCSQUID(Circuit):
-    def __init__(self, nodes: list[Node], C_S: Capacitor, L_JL: InductiveElement, L_JR: InductiveElement, C_JL: Capacitor, C_JR: Capacitor):
-        graph_rep = {
-        'nodes': ['a'],
-        'capacitors': [
-            ('a', 'gnd', C),  # Shunt capacitor
-            ('a', 'gnd', CC), # Coupling capacitor
-        ],
-        'inductors': [],
-        'josephson_elements': [
-            ('a', 'gnd', EJ),
-        ],
-    }
+class DCSQUID():
+    _id = 0
+    def __init__(self, gnd: Node, external_flux: float, left_josephson_current: float, right_josephson_current: float, left_josephson_capacitance: float, right_josephson_capacitance: float) -> None:
+        # ---- Store Alias to Ground Node ----
+        self.gnd = gnd
+        
+        # ---- Create the Island, Stores Net Guage-Invariant Phase Difference Across the Josephson Junction ----
+        self.island = Node(label=str(f"q_{DCSQUID._id}"), branches=[])
+        DCSQUID._id += 1
+        
+        # ---- Create branches list for this DCSQUID ----
+        self.branches = []
+        
+        # ---- Create capacitors ----
+        for capacitance in [left_josephson_capacitance, right_josephson_capacitance]:
+            if capacitance > 0:
+                capacitor = Capacitor(capacitance=capacitance, nodes=[self.island, self.gnd])
+                # Add capacitor to the DCSQUID object
+                self.branches.append(capacitor)
+                # Add capacitor to the nodes it connects
+                self.island.branches.append(capacitor)
+                self.gnd.branches.append(capacitor)
+                
+        # ---- Calculate Effective Josphson Energy as a Function of PHI_ext ----
+        EJ = DCSQUID.calculate_effective_EJ(external_flux, left_josephson_current, right_josephson_current)
+        
+        # ---- Create a Josephson element that plays the role of both Josephson elements with EJ_eff ----
+        josephson_element = JosephsonElement(josephson_energy=EJ, nodes=[self.island, self.gnd])
+        
+        # Add Josephson element to the DCSQUID object
+        self.branches.append(josephson_element)
+        # Add Josephson element to the branches it connects
+        self.island.branches.append(josephson_element)
+        self.gnd.branches.append(josephson_element)
+        
+    
+    @staticmethod
+    def calculate_effective_EJ(PHI_ext: float, JL: float, JR: float):
+        EJL = REDUCED_FLUX_QUANTUM * JL
+        EJR = REDUCED_FLUX_QUANTUM * JR
+        
+        d   = (JR - JL) / (JR + JL)
+        
+        return (EJL + EJR) * np.cos(PHI_ext / (2 * REDUCED_FLUX_QUANTUM)) * np.sqrt(1 + (d**2) * (np.tan(PHI_ext / (2 * REDUCED_FLUX_QUANTUM))**2))
+            
+        
 
 
 ================ fidelity.py ================
@@ -580,7 +551,7 @@ from scipy.linalg import ishermitian
 import matplotlib.pyplot as plt
 
 from System import System
-from Transmon import Transmon
+from Branch import *
 from Operator import Operator
 from Wavefunction import Wavefunction
 from PauliMatrices import X, Y, Z
@@ -589,68 +560,117 @@ from constants import *
 from fidelity import *
 from Circuit import Circuit
 from Quantize import quantize
+from DCSQUID import DCSQUID
+from TransmonCircuit import TransmonCircuit
 
 PLOT = True
 
 def main():
     # ---- Shared Hyper-parameters ----
-    n                  = 201            # Number of charge states, -n/2 : n/2 for each transmon
-    n_trunc            = 7              # number of states to truncate to for each transmon
+    n                  = 51            # Number of charge states, -n/2 : n/2 for each transmon
+    n_trunc            = 5              # number of states to truncate to for each transmon
     clock_multiplier   = 8
-    ramp               = ['10000000', '10000000']
     ramp               = []
+    # ramp               = ['01000000', '11000000', '10000000', '00000000', '00000000']
     
     # ---- Transmon Circuit Hyper-parameters ----
-    THETAS  = np.array([np.pi/100, np.pi/100])
-    PHI_on  = np.array([0.130, 0.352, 0.130]) * FLUX_QUANTUM
+    THETAS  = np.array([np.pi/100, np.pi/100, np.pi/100])
     PHI_off = np.array([0.130, 0.376, 0.130]) * FLUX_QUANTUM
+    PHI_on  = np.array([0.130, 0.352, 0.130]) * FLUX_QUANTUM
     
-    J1L = 7 * 1e-9  # [nA]
-    J2L = 7 * 1e-9  # [nA]
-    J1R = 21 * 1e-9 # [nA]
-    J2R = 21 * 1e-9 # [nA]
-    JcL = 18 * 1e-9 # [nA]
-    JcR = 36 * 1e-9 # [nA]
+    J_1L = 7 * 1e-9  # [nA]
+    J_2L = 7 * 1e-9  # [nA]
     
-    C1  = 70 * 1e-15   # [F]
-    C2  = 70 * 1e-15   # [F]
-    Cc  = 60 * 1e-15   # [F]
-    C12 = 0.25 * 1e-15 # [F]
-    C1c = 2 * 1e-15    # [F]
-    C2c = 2 * 1e-15    # [F]
+    J_1R = 21 * 1e-9 # [nA]
+    J_2R = 21 * 1e-9 # [nA]
     
-    C1e = 7.5 * 1e-15  # [F]
-    C2e = 7.5 * 1e-15  # [F]
+    J_CL = 18 * 1e-9 # [nA]
+    J_CR = 36 * 1e-9 # [nA]
     
-    # ---- Graph Representation of the Transmon Circuit ----
-    EJ1 = Transmon.calculate_effective_EJ(external_flux=PHI_off[0], JL=J1L, JR=J1R)
-    EJc = Transmon.calculate_effective_EJ(external_flux=PHI_off[1], JL=JcL, JR=JcR)
-    EJ2 = Transmon.calculate_effective_EJ(external_flux=PHI_off[2], JL=J2L, JR=J2R)
+    C_1  = 70 * 1e-15   # [F]
+    C_2  = 70 * 1e-15   # [F]
+    C_C  = 60 * 1e-15   # [F]
     
-    graph_rep = {
-        'nodes': ['q1', 'c', 'q2'],
-        'capacitors': [
-            ('q1', 'gnd', C1),
-            ('q1', 'gnd', C1e),
-            ('q1', 'c', C1c),
-            ('q1', 'q2', C12),
-            ('c', 'gnd', Cc),
-            ('c', 'q2', C2c),
-            ('q2', 'gnd', C2),
-            ('q2', 'gnd', C2e),
-        ],
-        'inductors': [],
-        'josephson_elements': [
-            ('q1', 'gnd', EJ1),
-            ('c',  'gnd', EJc),
-            ('q2', 'gnd', EJ2),
-        ],
-        'external_flux': {}
-    }
+    C_12 = 0.25 * 1e-15 # [F]
+    C_1C = 2 * 1e-15    # [F]
+    C_2C = 2 * 1e-15    # [F]
     
-    circuit = Circuit(graph_rep=graph_rep)
+    C_1e = 7.5 * 1e-15  # [F]
+    C_2e = 7.5 * 1e-15  # [F]
     
-    transmons, EC_matrix = quantize(circuit=circuit, PHI_off=PHI_off, PHI_on=PHI_on, n=n)
+    # ---- Create Ground Node ----
+    gnd = Node(label="gnd", branches=[])
+    
+    # ---- Create Nodes and Branches of Each DCSQUID Circuit (C_JL, C_JR are embedded in self C which comes from TransmonCircuit) ----
+    q1_dcsquid = DCSQUID(
+        gnd=gnd,
+        external_flux=PHI_off[0],
+        left_josephson_current=J_1L,
+        right_josephson_current=J_1R,
+        left_josephson_capacitance=0,
+        right_josephson_capacitance=0,
+    )
+    
+    qc_dcsquid = DCSQUID(
+        gnd=gnd,
+        external_flux=PHI_off[1],
+        left_josephson_current=J_CL,
+        right_josephson_current=J_CR,
+        left_josephson_capacitance=0,
+        right_josephson_capacitance=0,
+    )
+    
+    q2_dcsquid = DCSQUID(
+        gnd=gnd,
+        external_flux=PHI_off[2],
+        left_josephson_current=J_2L,
+        right_josephson_current=J_2R,
+        left_josephson_capacitance=0,
+        right_josephson_capacitance=0,
+    )
+
+    # ---- Create Transmon Circuits by Adding a Shunt Capacitor Branch to each DCSQUID ----
+    q1 = TransmonCircuit(
+        dcsquid=q1_dcsquid,
+        shunt_capacitance=C_1,
+        coupling_capacitance=C_1e
+    )
+    
+    qc = TransmonCircuit(
+        dcsquid=qc_dcsquid,
+        shunt_capacitance=C_C,
+        coupling_capacitance=0
+    )
+    
+    q2 = TransmonCircuit(
+        dcsquid=q2_dcsquid,
+        shunt_capacitance=C_2,
+        coupling_capacitance=C_2e
+    )
+    
+    # ---- Create Branches For Inter-Island Capacitances ----
+    cap_12 = Capacitor(capacitance=C_12, nodes=[q1.island, q2.island])
+    q1.island.branches.append(cap_12)
+    q2.island.branches.append(cap_12)
+    
+    cap_1C = Capacitor(capacitance=C_1C, nodes=[q1.island, qc.island])
+    q1.island.branches.append(cap_1C)
+    qc.island.branches.append(cap_1C)
+    
+    cap_2C = Capacitor(capacitance=C_2C, nodes=[q2.island, qc.island])
+    q2.island.branches.append(cap_2C)
+    qc.island.branches.append(cap_2C)
+
+    # ---- Create the Larger Circuit Graph Object (G = (V, E)) ----
+    circuit_graph = Graph(
+        vertices=[gnd, q1.island, qc.island, q2.island], 
+        edges=q1.branches + qc.branches + q2.branches
+        )
+    
+    # ---- Create Circuit Object From Graph ----
+    circuit = Circuit(circuit_graph)
+    
+    transmons, EC_matrix = quantize(circuit=circuit, n=n)
         
     n_full = n_trunc ** len(transmons)
     
@@ -705,6 +725,8 @@ def main():
         initial_state=initial_state,
         ramp=ramp,
         N_kicks=N_kicks,
+        PHI_off=PHI_off,
+        PHI_on=PHI_on
     )
     
     # Target Unitary on the computational subspace of a single qubit
@@ -718,7 +740,6 @@ def main():
     for i in range(1):
         system.state.reset_accumulated_unitary() 
         
-        print("Applying RY")
         system.RY(k)
         
         # (n_full x n_full)
@@ -727,8 +748,6 @@ def main():
         # NOTE: The logical bit strings are in base n_trunc, i.e.
         # |b2, b1, b0> = b2 * (n_trunc**2) + b1 * (n_trunc**1) + b0 * (n_trunc**0)
         # len(|b2, b1, b0>) = n_trunc**3
-        
-        
         
         # ---- Calculate Gate Fidelity for Qubit 0 ----
         # Want to project onto the first k=0 qubit computational subspace
@@ -971,7 +990,7 @@ from Transmon import Transmon
 from Circuit import Circuit
 
 
-def quantize(circuit: Circuit, PHI_off: np.ndarray, PHI_on: np.ndarray, n: int):
+def quantize(circuit: Circuit, n: int):
     """
     Parameters
     ----------
@@ -993,8 +1012,6 @@ def quantize(circuit: Circuit, PHI_off: np.ndarray, PHI_on: np.ndarray, n: int):
         transmons.append(Transmon(
             EC=EC,
             EJ_EC=EJ_EC,
-            PHI_off=PHI_off,
-            PHI_on=PHI_on,
             n=n
         ))
         
@@ -1183,13 +1200,19 @@ from constants import *
 from fidelity import *
 from Circuit import Circuit
 from Quantize import quantize
+from Branch import *
+from DCSQUID import DCSQUID
+from TransmonCircuit import TransmonCircuit
+from PauliMatrices import X, Y, Z
+
+
 
 PLOT = True
 
 def main():
     # ---- Shared Hyper-parameters ----
-    n                  = 101            # Number of charge states, -n/2 : n/2 for each transmon
-    n_trunc            = 5              # number of states to truncate to for each transmon
+    n                  = 201            # Number of charge states, -n/2 : n/2 for each transmon
+    n_trunc            = 7              # number of states to truncate to for each transmon
     clock_multiplier   = 8
     ramp               = ['01000000', '11000000', '10000000', '00000000', '00000000']
     
@@ -1200,52 +1223,52 @@ def main():
     
     # ---- Derived Physical Constants ----
     EJ    = EJ_EC * EC
+    JL    = EJ / (2 * REDUCED_FLUX_QUANTUM)
+    JR    = EJ / (2 * REDUCED_FLUX_QUANTUM)
     n_zpf = (1/2) * (EJ_EC / 2)**(1/4) # approximation
-    BETAS  = THETAS / (2 * n_zpf)        # approximation
+    BETAS = THETAS / (2 * n_zpf)        # approximation
     C_T   = e**2 / (2 * EC)            # includes Josephson Capacitance CJ
-    CC    = (BETAS[0] * hbar * C_T) / FLUX_QUANTUM
-    C     = C_T - CC
+    C_C    = (BETAS[0] * hbar * C_T) / FLUX_QUANTUM
+    C     = C_T - C_C
     
-    C  = 7.748091729863649e-14
-    CC = 4.891271340097761e-35
-    EJ = 1.142997100875e-23
+    # ---- Create Ground Node ----
+    gnd = Node(label="gnd", branches=[])
     
-    # ---- Graph Representation of the Transmon Circuit ----
-    graph_rep = {
-        'nodes': ['a'],
-        'capacitors': [
-            ('a', 'gnd', C),  # Shunt capacitor
-            ('a', 'gnd', CC), # Coupling capacitor
-        ],
-        'inductors': [],
-        'josephson_elements': [
-            ('a', 'gnd', EJ),
-        ],
-    }
+    # ---- Create Nodes and Branches of Each DCSQUID Circuit (C_JL, C_JR are embedded in C_S) ----
+    q1_dcsquid = DCSQUID(
+        gnd=gnd,
+        external_flux=0,
+        left_josephson_current=JL,
+        right_josephson_current=JR,
+        left_josephson_capacitance=0,
+        right_josephson_capacitance=0,
+    )
     
+    # ---- Create Transmon Circuit by Adding a Shunt Capacitor Branch ----
+    q1 = TransmonCircuit(
+        dcsquid=q1_dcsquid,
+        shunt_capacitance=C,
+        coupling_capacitance=C_C
+    )
+
+    # ---- Create the Larger Circuit Graph Object (G = (V, E)) ----
+    circuit_graph = Graph(vertices=[gnd, q1.island], edges=q1.branches)
     
-    circuit = Circuit(graph_rep=graph_rep)
+    # ---- Create Circuit Object From Graph ----
+    circuit = Circuit(circuit_graph)
     
     transmons, EC_matrix = quantize(circuit=circuit, n=n)
         
     n_full = n_trunc ** len(transmons)
     
-    for k in range(len(transmons)):
-        print(f"n['energy'][:2,:2]: ") 
-        print(transmons[k].n["energy"][:2,:2])
-        print(f"n Hermitian = {np.allclose(transmons[k].n["energy"], transmons[k].n["energy"].conj().T)}")
-        print(f"n Unitary = {np.allclose(np.eye(len(transmons[k].n["energy"])), transmons[k].n["energy"] @ transmons[k].n["energy"].conj().T)}")
+    print(f"Full Hilbert space dimension: {n_full}")
     
-    # ---- Create Quantum States |0>, |1>, and the projector onto the computational subspace H_2 ----
-    zero_state = Wavefunction(basis_to_coefs={"energy" : np.array([1] + (n_full - 1) * [0])})
-    one_state  = Wavefunction(basis_to_coefs={"energy" : np.array([0] + [1] + (n_full - 2) * [0])})
-    
-    P_Q = Operator(
-        basis_to_matrix={"energy": np.outer(to_ket(zero_state["energy"]), to_bra(zero_state["energy"])) + np.outer(to_ket(one_state["energy"]), to_bra(one_state["energy"]))}
-    )
-    
+    # ---- Create individual Subsystem Quantum Basis States ----
+    z = Wavefunction(basis_to_coefs={"energy" : np.array([1] + (n_trunc - 1) * [0])})
+    o = Wavefunction(basis_to_coefs={"energy" : np.array([0] + [1] + (n_trunc - 2) * [0])})
+
     # ---- Creating Our Initial Quantum State in Energy/Fock Basis, |0> ----
-    initial_state = Wavefunction(basis_to_coefs={"energy" : zero_state["energy"].copy()})
+    initial_state = Wavefunction(basis_to_coefs={"energy" : z["energy"].copy()})
     
     if PLOT:
         plt.ion()
@@ -1268,9 +1291,11 @@ def main():
     # Target Unitary rotation
     theta_target = np.pi/2
     
+    # Qubit to rotate
+    k = 0
+    
     # Number of kicks in pulse train
     N_kicks = 47
-    # N = int(np.round(theta_target / theta))
     
     system = System(
         transmons=transmons,
@@ -1280,7 +1305,8 @@ def main():
         initial_state=initial_state,
         ramp=ramp,
         N_kicks=N_kicks,
-        flux_schedule=[]
+        PHI_off=[], 
+        PHI_on=[]
     )
     
     RY_TARGET = Operator(
@@ -1293,36 +1319,51 @@ def main():
     for i in range(1):
         system.state.reset_accumulated_unitary() 
         
-        system.RY(k=0)
+        system.RY(k)
+        
+        # (n_full x n_full)
         U = system.state.get_accumulated_unitary()
+        
+        # NOTE: The logical bit strings are in base n_trunc, i.e.
+        # |b2, b1, b0> = b2 * (n_trunc**2) + b1 * (n_trunc**1) + b0 * (n_trunc**0)
+        # len(|b2, b1, b0>) = n_trunc**3
 
-        U_Q_full = Operator(
-            basis_to_matrix={"energy" : P_Q["energy"] @ U["energy"] @ P_Q["energy"]}
+        
+         # ---- Calculate Gate Fidelity for Qubit 0 ----
+        # Want to project onto the first k=0 qubit computational subspace
+        # Want P|psi> = a|000> + b|100>
+        # (n_full x n_full)
+        P_0 = Operator(
+            basis_to_matrix={
+                "energy": np.outer(to_ket(z["energy"]), to_bra(z["energy"])) + \
+                            np.outer(to_ket(o["energy"]), to_bra(o["energy"]))
+                }
         )
-        
-        U_Q = Operator(
-            basis_to_matrix={"energy": U_Q_full["energy"][:2, :2]}
+        # (n_full x n_full)
+        U_Q0 = Operator(
+            basis_to_matrix={"energy": P_0["energy"] @ U["energy"] @ P_0["energy"]}
         )
-        
-        L1 = get_L1(U=U_Q, basis="energy")
-        
-        # print(f"Leakage Metric: {leakage}")
-        process_fidelity = get_process_fidelity(U_Q=U_Q, U_target=RY_TARGET, basis="energy")
-        # print(f"Process Fidelity: {process_fidelity}")
-        avg_gate_fidelity = get_average_gate_fidelity(process_fidelity=process_fidelity, L1=L1)
-        # print(f"Average Gate Fidelity in the Absence of a Loss Channel: {avg_gate_fidelity}")
-        print(f"L1: {L1}")
-        r = np.linalg.norm(get_pauli_coefs(U=U_Q, basis="energy"))
-        print(f"r: {r}")
-        print(f"Fidelity: {avg_gate_fidelity}")
+        idx_0 = [0, n_trunc**0]
+        # (2 x 2)
+        U_Q0_2x2 = Operator(
+            basis_to_matrix={"energy": U_Q0["energy"][np.ix_(idx_0, idx_0)]}
+        )
+        L1_0 = get_L1(U=U_Q0_2x2, basis="energy")
+        process_fidelity_0 = get_process_fidelity(U_Q=U_Q0_2x2, U_target=RY_TARGET, basis="energy")
+        avg_gate_fidelity_0 = get_average_gate_fidelity(process_fidelity=process_fidelity_0, L1=L1_0)
+        r_0 = np.linalg.norm(get_pauli_coefs(U=U_Q0_2x2, basis="energy"))
+        print(f"Gate on Qubit {0} Fidelity: {avg_gate_fidelity_0}")
         
         probabilities = system.state.get_probabilities("energy")
         
+        rho = np.outer(system.state["energy"], system.state["energy"].conj())
+        
+        bx = np.trace(rho[:2, :2] @ X).real
+        by = np.trace(rho[:2, :2] @ Y).real
+        bz = np.trace(rho[:2, :2] @ Z).real
+        
         
         if PLOT:
-            state_azimuth, state_inclination = get_spherical_coords(alpha=system.state["energy"][0],
-                                                                    beta=system.state["energy"][1])
-            bx, by, bz = get_rectangular_coords(azimuth=state_azimuth, inclination=state_inclination)
             
             bx_hist.append(bx)
             by_hist.append(by)
@@ -1417,7 +1458,7 @@ def main():
             fig.canvas.flush_events()
 
         print(f"Final State: ")
-        print(system.state["energy"][:3])
+        print(system.state["energy"])
     
     if PLOT:
         plt.ioff()
@@ -1440,7 +1481,7 @@ from Wavefunction import Wavefunction
 from constants import *
 
 class System():
-    def __init__(self, transmons: list[Transmon], EC_matrix: np.ndarray, thetas: np.ndarray, clock_multiplier: int, initial_state: Wavefunction, ramp: list[str], N_kicks: int):
+    def __init__(self, transmons: list[Transmon], EC_matrix: np.ndarray, thetas: np.ndarray, clock_multiplier: int, initial_state: Wavefunction, ramp: list[str], N_kicks: int, PHI_off: np.ndarray, PHI_on: np.ndarray):
         self.transmons     = transmons
         self.EC_matrix     = EC_matrix
         self.thetas        = thetas
@@ -1448,80 +1489,54 @@ class System():
         self.state         = initial_state  
         self.ramp          = ramp
         self.N_kicks       = N_kicks
-        self.coupling      = False
+        self.PHI_off       = PHI_off
+        self.PHI_on        = PHI_on
         
         self.n_full        = len(self.state["energy"]) # Dimension of full Hilbert space of the system
         self.n_trunc       = int(round(self.n_full**(1/len(self.transmons))))
-        
-        # ---- Create Projectors for each individual qubit subspace ----
-        
-        # self.projectors = [
-        #     System.create_projector(
-        #         bases=["energy"], 
-        #         n_trunc=self.n_trunc,
-        #         ind=k,
-        #         num_subsystems=len(self.transmons)
-        #         )
-        #     for k in range(len(self.transmons))
-        #     ]
-        
-        
-        # ---- Truncate each transmon to n_trunc x n_trunc, then upgrade it to the n_full state space
-        # print("Starting truncate/upgrade...")
-        self.sys_transmons = self.sys_transmons = copy.deepcopy(self.transmons)
-        
-        for k in range(len(self.transmons)):
-            sys_transmon = self.sys_transmons[k]
-            
-            for label in list(sys_transmon.operators.keys()):
-                
-                sys_transmon.operators[label] = System.upgrade(
-                    operator=System.truncate(sys_transmon.operators[label], self.n_trunc),
-                    n_trunc=self.n_trunc,
-                    idx=k,
-                    num_subsystems=len(self.transmons)
-                )
         
         # ---- Derive Qubit and Clock Periods ----
         self.T_q           = np.array([(2*np.pi) / t.qubit_angular_frequency for t in self.transmons]) # Qubit period [s]
         # We assume our computational qubits share the same angular frequency s.t. the clock period is well-defined
         self.T_c           = self.T_q[0] / self.M                                                      # Clock period [s]
         
-        # ---- Derive Kick Operators for Logical Qubits 1 (and 2)
-        # print("Building kick operators...")
+        # ---- Create New Transmons Specifically For the System (Embedded in Larger Hilbert Space of Dimension n_full)
+        self.sys_transmons = copy.deepcopy(self.transmons)
+        
+        for k in range(len(self.transmons)):
+            sys_transmon = self.sys_transmons[k]
+            
+            for op_label in list(sys_transmon.operators.keys()):
+                
+                sys_transmon.operators[op_label] = System.upgrade(
+                    operator=System.truncate(sys_transmon.operators[op_label], self.n_trunc),
+                    n_trunc=self.n_trunc,
+                    idx=k,
+                    num_subsystems=len(self.transmons)
+                )
+
+        # ---- Derive Kick Operators for Logical Qubits
         self.transmon_to_kick = {}
         
-        self.transmon_to_kick[0] = Operator(
-                    basis_to_matrix={"energy": expm(-1j * (thetas[0] / self.sys_transmons[0].r) / 2 * self.transmons[0].n["energy"])}
-                )
-        self.transmon_to_kick[0] = System.truncate(
-            operator=self.transmon_to_kick[0],
-            n_trunc=self.n_trunc
-        )
-        self.transmon_to_kick[0] = System.upgrade(
-            operator=self.transmon_to_kick[0],
-            n_trunc=self.n_trunc,
-            idx=0,
-            num_subsystems=len(self.transmons)
-        )
-        
-        if len(self.transmons) > 1:
-            self.transmon_to_kick[2] = Operator(
-                        basis_to_matrix={"energy": expm(-1j * (thetas[1] / self.transmons[2].r) / 2 * self.transmons[2].n["energy"])}
+        for k in range(len(transmons)):
+            
+            self.transmon_to_kick[k] = Operator(
+                        basis_to_matrix={"energy": expm(-1j * (thetas[k] / self.transmons[k].r) / 2 * self.transmons[k].n["energy"])}
                     )
-            self.transmon_to_kick[2] = System.truncate(
-                operator=self.transmon_to_kick[2],
+            
+            self.transmon_to_kick[k] = System.truncate(
+                operator=self.transmon_to_kick[k],
                 n_trunc=self.n_trunc
             )
-            self.transmon_to_kick[2] = System.upgrade(
-                operator=self.transmon_to_kick[2],
+            
+            self.transmon_to_kick[k] = System.upgrade(
+                operator=self.transmon_to_kick[k],
                 n_trunc=self.n_trunc,
-                idx=2,
+                idx=k,
                 num_subsystems=len(self.transmons)
             )
         
         # ---- Derive Coupling Hamiltonain HC ----
-        # print("Building coupling Hamiltonian...")
         coupling_sum = 0
         for k in range(len(self.transmons)):
             for l in range(len(self.transmons)):
@@ -1535,37 +1550,65 @@ class System():
         )
         
         # ---- Derive the Unperturbed Hamiltonian H0 ----
-        # print("Building H0...")
-        total_h0 = self.sys_transmons[0].operators["H0"]["energy"]
-        for t in self.sys_transmons[1:]:
-            total_h0 = total_h0 + t.operators["H0"]["energy"]
-
+        total_H0 = sum(self.sys_transmons[j].operators["H0"]["energy"] for j in range(len(self.transmons)))
         self.H0 = Operator(
-            basis_to_matrix={"energy": total_h0 + self.HC["energy"]}
+            basis_to_matrix={"energy": total_H0 + self.HC["energy"]}
         )
         
-        # print(f"n_full = {self.n_full}")
-        # print(f"n_trunc = {self.n_trunc}")
-        # print(f"H0 shape = {self.H0['energy'].shape}")
-        # print(f"state length = {len(self.state['energy'])}")
-        
         # ---- For single qubit case ----
-        # print("Computing U1, UM...")
-        self.U1 = Operator(
+        self.U_1 = Operator(
             basis_to_matrix={"energy": expm(-1j * self.H0["energy"] * (1 * self.T_c) / hbar)}
         )
         
-        self.UM = Operator(
+        self.U_M = Operator(
             basis_to_matrix={"energy": expm(-1j * self.H0["energy"] * (self.M * self.T_c) / hbar)}
         )
+                        
+    def set_coupler_flux(self, k: int, EJ_new: float, n: int):
+        # ---- Create a new transmon with an updated josephson energy ----
+        new_transmon = Transmon(
+            EC=self.transmons[k].EC,
+            EJ_EC=(EJ_new/self.transmons[k].EC),
+            n=n
+        )
         
-        # print("System init complete.")
+        # ---- Update sys_transmons[k]'s operators with new_transmon's operators ----
+        for op_label, operator in new_transmon.operators.items():
+            self.sys_transmons[k].operators[op_label] = System.upgrade(
+                operator=System.truncate(operator, self.n_trunc),
+                n_trunc=self.n_trunc,
+                idx=k,
+                num_subsystems=len(self.transmons)
+            )
+            
+        # ---- Rebuild Coupling Hamiltonain HC ----
+        coupling_sum = 0
+        for k in range(len(self.transmons)):
+            for l in range(len(self.transmons)):
+                if k == l:
+                    continue
+                else:   
+                    coupling_sum += (self.EC_matrix[k][l] * self.sys_transmons[k].operators["n"]["energy"] @ self.sys_transmons[l].operators["n"]["energy"])
                 
-    def switch_coupling(self):
-        if self.coupling == False:
-            self.coupling == True
-        else:
-            self.coupling == False
+        self.HC = Operator(
+            basis_to_matrix={"energy" : 4 * coupling_sum}
+        )
+        
+        # ---- Rebuild the Unperturbed Hamiltonian H0 ----
+        total_H0 = sum(self.sys_operators[j]["H0"]["energy"] for j in range(len(self.transmons)))
+        self.H0 = Operator(
+            basis_to_matrix={"energy": total_H0 + self.HC["energy"]}
+        )
+        
+        # ---- Rebuild free evolution unitaries ----
+        self.U_1 = Operator(
+            basis_to_matrix={"energy": expm(-1j * self.H0["energy"] * (1 * self.T_c) / hbar)}
+        )
+        
+        self.U_M = Operator(
+            basis_to_matrix={"energy": expm(-1j * self.H0["energy"] * (self.M * self.T_c) / hbar)}
+        )            
+        
         
     def free_evolve(self, clock_cycles: int):
         self.state.apply(
@@ -1581,10 +1624,7 @@ class System():
         for _ in range(self.N_kicks):
             self.state.apply(self.transmon_to_kick[k])
             
-            self.state.apply(self.UM)
-            # self.free_evolve(
-            #     clock_cycles=self.M,
-            # )
+            self.state.apply(self.U_M)
         
         self.off_ramp_evolve(k)
             
@@ -1594,13 +1634,13 @@ class System():
             for action in sequence:
                 if action == "0":
                     # free evolve for a single clock cycle
-                    self.state.apply(self.U1)
+                    self.state.apply(self.U_1)
                 else:
                     # kick
                     self.state.apply(self.transmon_to_kick[k])
 
                     # free evolve for a single clock cycle
-                    self.state.apply(self.U1)
+                    self.state.apply(self.U_1)
 
     def off_ramp_evolve(self, k: int):
         flipped_ramps = [self.flip_X_ramp(r) for r in self.ramp][::-1]
@@ -1609,13 +1649,13 @@ class System():
             for action in sequence:
                 if action == "0":
                     # free evolve for a single clock cycle
-                    self.state.apply(self.U1)
+                    self.state.apply(self.U_1)
                 else:
                     # kick
                     self.state.apply(self.transmon_to_kick[k])
 
                     # free evolve for a single clock cycle
-                    self.state.apply(self.U1)
+                    self.state.apply(self.U_1)
 
     @staticmethod
     def flip_X_ramp(ramp: str):
@@ -1651,31 +1691,11 @@ class System():
                     
             upgraded_basis_to_matrix[basis] = upgraded_matrix
                 
-        return Operator(upgraded_basis_to_matrix)
-    
-    # NOTE: THIS IS WRONG 
-    # @staticmethod
-    # def create_projector(bases: list[str], n_trunc: int, idx: int, num_subsystems: int):
-    #     projected_basis_to_matrix = {}
-        
-    #     for basis in bases:
-    #         p = 1.0
-            
-    #         for k in range(num_subsystems): 
-    #             if k == idx:
-    #                 upgraded_matrix = np.kron(p, np.eye(n_trunc))
-    #             else:
-    #                 upgraded_matrix = np.kron(upgraded_matrix, np.zeros((n_trunc, n_trunc)))
-                    
-    #         projected_basis_to_matrix[basis] = p
-                
-    #     return Operator(projected_basis_to_matrix)
-        
+        return Operator(upgraded_basis_to_matrix)        
 
 
 ================ Transmon.py ================
 import numpy as np
-from typing import Optional
 
 from QuantumOscillator import QuantumOscillator
 from Operator import Operator
@@ -1686,7 +1706,7 @@ class Transmon(QuantumOscillator):
     """
     A Transmon system
     """
-    def __init__(self, EC: float, EJ_EC: float, PHI_off: np.ndarray, PHI_on: np.ndarray, n: int):
+    def __init__(self, EC: float, EJ_EC: float, n: int):
         self.EC = EC                       # Charging energy
         self.EJ = EJ_EC * self.EC          # Josephson energy
         self.r  = (1/2)*(EJ_EC / 2)**(1/4) # charge zero-point-fluctuation
@@ -1740,19 +1760,37 @@ class Transmon(QuantumOscillator):
             "H0": self.H0,
         }
                        
-    @staticmethod
-    def calculate_effective_EJ(external_flux: float, JL: float, JR: float):
-        EJL = REDUCED_FLUX_QUANTUM * JL
-        EJR = REDUCED_FLUX_QUANTUM * JR
-        
-        d   = (JR - JL) / (JR + JL)
-        
-        return (EJL + EJR) * np.cos(external_flux / (2 * REDUCED_FLUX_QUANTUM)) * np.sqrt(1 + (d**2) * (np.tan(external_flux / (2 * REDUCED_FLUX_QUANTUM))**2))
-            
-        
+
     
     
     
+
+
+================ TransmonCircuit.py ================
+from Branch import Node, Capacitor
+from DCSQUID import DCSQUID
+
+class TransmonCircuit():
+    def __init__(self, dcsquid: DCSQUID, shunt_capacitance: float, coupling_capacitance: float) -> None:
+        self.gnd = dcsquid.gnd
+        self.island = dcsquid.island
+        self.branches = list(dcsquid.branches)
+        
+        # Add a shunt capacitor
+        shunt_capacitor = Capacitor(capacitance=shunt_capacitance, nodes=[self.island, self.gnd])
+        
+        self.branches.append(shunt_capacitor)
+        self.island.branches.append(shunt_capacitor)
+        self.gnd.branches.append(shunt_capacitor)
+        
+        # Add a coupling capacitor
+        coupling_capacitor = Capacitor(capacitance=coupling_capacitance, nodes=[self.island, self.gnd])
+        
+        self.branches.append(coupling_capacitor)
+        self.island.branches.append(coupling_capacitor)
+        self.gnd.branches.append(coupling_capacitor)
+        
+        
 
 
 ================ utils.py ================

@@ -3,20 +3,22 @@ from Branch import *
 
 class DCSQUID():
     _id = 0
-    def __init__(self, gnd: Node, PHI_ext: float, JL: float, JR: float, C_JL: float, C_JR: float, C_C: float) -> None:
+    def __init__(self, gnd: Node, external_flux: float, left_josephson_current: float, right_josephson_current: float, left_josephson_capacitance: float, right_josephson_capacitance: float) -> None:
+        self.J_L = left_josephson_current
+        self.J_R = right_josephson_current
+        
         # ---- Store Alias to Ground Node ----
         self.gnd = gnd
-        
-        # ---- Calculate Effective Josphson Energy as a Function of PHI_ext ----
-        EJ_eff = DCSQUID.calculate_effective_EJ(PHI_ext, JL, JR)
         
         # ---- Create the Island, Stores Net Guage-Invariant Phase Difference Across the Josephson Junction ----
         self.island = Node(label=str(f"q_{DCSQUID._id}"), branches=[])
         DCSQUID._id += 1
+        
+        # ---- Create branches list for this DCSQUID ----
         self.branches = []
         
         # ---- Create capacitors ----
-        for capacitance in [C_JL, C_JR, C_C]:
+        for capacitance in [left_josephson_capacitance, right_josephson_capacitance]:
             if capacitance > 0:
                 capacitor = Capacitor(capacitance=capacitance, nodes=[self.island, self.gnd])
                 # Add capacitor to the DCSQUID object
@@ -24,9 +26,12 @@ class DCSQUID():
                 # Add capacitor to the nodes it connects
                 self.island.branches.append(capacitor)
                 self.gnd.branches.append(capacitor)
+                
+        # ---- Calculate Effective Josphson Energy as a Function of PHI_ext ----
+        EJ = DCSQUID.calculate_effective_EJ(external_flux, left_josephson_current, right_josephson_current)
         
         # ---- Create a Josephson element that plays the role of both Josephson elements with EJ_eff ----
-        josephson_element = JosephsonElement(josephson_energy=EJ_eff, nodes=[self.island, self.gnd])
+        josephson_element = JosephsonElement(josephson_energy=EJ, nodes=[self.island, self.gnd])
         
         # Add Josephson element to the DCSQUID object
         self.branches.append(josephson_element)
@@ -36,12 +41,12 @@ class DCSQUID():
         
     
     @staticmethod
-    def calculate_effective_EJ(external_flux: float, JL: float, JR: float):
+    def calculate_effective_EJ(PHI_ext: float, JL: float, JR: float):
         EJL = REDUCED_FLUX_QUANTUM * JL
         EJR = REDUCED_FLUX_QUANTUM * JR
         
         d   = (JR - JL) / (JR + JL)
         
-        return (EJL + EJR) * np.cos(external_flux / (2 * REDUCED_FLUX_QUANTUM)) * np.sqrt(1 + (d**2) * (np.tan(external_flux / (2 * REDUCED_FLUX_QUANTUM))**2))
+        return (EJL + EJR) * np.cos(PHI_ext / (2 * REDUCED_FLUX_QUANTUM)) * np.sqrt(1 + (d**2) * (np.tan(PHI_ext / (2 * REDUCED_FLUX_QUANTUM))**2))
             
         

@@ -1,5 +1,4 @@
 import numpy as np
-from typing import Optional
 
 from QuantumOscillator import QuantumOscillator
 from Operator import Operator
@@ -10,7 +9,7 @@ class Transmon(QuantumOscillator):
     """
     A Transmon system
     """
-    def __init__(self, EC: float, EJ_EC: float, PHI_off: np.ndarray, PHI_on: np.ndarray, n: int):
+    def __init__(self, EC: float, EJ_EC: float, n: int):
         self.EC = EC                       # Charging energy
         self.EJ = EJ_EC * self.EC          # Josephson energy
         self.r  = (1/2)*(EJ_EC / 2)**(1/4) # charge zero-point-fluctuation

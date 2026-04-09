@@ -2,14 +2,23 @@ from Branch import Node, Capacitor
 from DCSQUID import DCSQUID
 
 class TransmonCircuit():
-    def __init__(self, C_S: float, dcsquid: DCSQUID) -> None:
+    def __init__(self, dcsquid: DCSQUID, shunt_capacitance: float, coupling_capacitance: float) -> None:
         self.gnd = dcsquid.gnd
         self.island = dcsquid.island
         self.branches = list(dcsquid.branches)
         
-        # Just add a shunt capacitor
-        capacitor = Capacitor(capacitance=C_S, nodes=[dcsquid.island, dcsquid.gnd])
+        # Add a shunt capacitor
+        shunt_capacitor = Capacitor(capacitance=shunt_capacitance, nodes=[self.island, self.gnd])
         
-        self.branches.append(capacitor)
-        self.island.branches.append(capacitor)
-        self.gnd.branches.append(capacitor)
+        self.branches.append(shunt_capacitor)
+        self.island.branches.append(shunt_capacitor)
+        self.gnd.branches.append(shunt_capacitor)
+        
+        # Add a coupling capacitor
+        coupling_capacitor = Capacitor(capacitance=coupling_capacitance, nodes=[self.island, self.gnd])
+        
+        self.branches.append(coupling_capacitor)
+        self.island.branches.append(coupling_capacitor)
+        self.gnd.branches.append(coupling_capacitor)
+        
+        

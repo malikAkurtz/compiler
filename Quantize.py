@@ -13,7 +13,7 @@ from Transmon import Transmon
 from Circuit import Circuit
 
 
-def quantize(circuit: Circuit, PHI_off: np.ndarray, PHI_on: np.ndarray, n: int):
+def quantize(circuit: Circuit, n: int):
     """
     Parameters
     ----------
@@ -35,8 +35,6 @@ def quantize(circuit: Circuit, PHI_off: np.ndarray, PHI_on: np.ndarray, n: int):
         transmons.append(Transmon(
             EC=EC,
             EJ_EC=EJ_EC,
-            PHI_off=PHI_off,
-            PHI_on=PHI_on,
             n=n
         ))
         

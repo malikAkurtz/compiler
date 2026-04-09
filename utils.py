@@ -1,6 +1,7 @@
 import numpy as np
 
 from PauliMatrices import PAULI_MATRICES
+from Operator import Operator
 
 def get_spherical_coords(alpha, beta):
     norm = np.sqrt(np.abs(alpha)**2 + np.abs(beta)**2)
@@ -84,4 +85,21 @@ def get_pauli_coefs(U: np.ndarray, basis: str):
             
         return coefs
 
+def get_RY_target(theta_target: float):
+    RY_TARGET = Operator(
+        basis_to_matrix={"energy": np.array([
+                [np.cos(theta_target / 2), -np.sin(theta_target / 2)],
+                [np.sin(theta_target / 2), np.cos(theta_target / 2)]
+            ])}
+    )
+    return RY_TARGET
+
+def get_RX_target(theta_target: float):
+    RX_TARGET = Operator(
+        basis_to_matrix={"energy": np.array([
+                [np.cos(theta_target / 2), -1j * np.sin(theta_target / 2)],
+                [-1j * np.sin(theta_target / 2), np.cos(theta_target / 2)]
+            ])}
+    )
+    return RX_TARGET
 

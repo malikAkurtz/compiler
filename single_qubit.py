@@ -14,6 +14,9 @@ from Quantize import quantize
 from Branch import *
 from DCSQUID import DCSQUID
 from TransmonCircuit import TransmonCircuit
+from PauliMatrices import X, Y, Z
+
+
 
 PLOT = True
 
@@ -36,8 +39,8 @@ def main():
     n_zpf = (1/2) * (EJ_EC / 2)**(1/4) # approximation
     BETAS = THETAS / (2 * n_zpf)        # approximation
     C_T   = e**2 / (2 * EC)            # includes Josephson Capacitance CJ
-    CC    = (BETAS[0] * hbar * C_T) / FLUX_QUANTUM
-    C     = C_T - CC
+    C_C    = (BETAS[0] * hbar * C_T) / FLUX_QUANTUM
+    C     = C_T - C_C
     
     # ---- Create Ground Node ----
     gnd = Node(label="gnd", branches=[])
@@ -45,17 +48,18 @@ def main():
     # ---- Create Nodes and Branches of Each DCSQUID Circuit (C_JL, C_JR are embedded in C_S) ----
     q1_dcsquid = DCSQUID(
         gnd=gnd,
-        PHI_ext=0,
-        JL=JL,
-        JR=JR,
-        C_JL=0,
-        C_JR=0,
-        C_C=CC
+        external_flux=0,
+        left_josephson_current=JL,
+        right_josephson_current=JR,
+        left_josephson_capacitance=0,
+        right_josephson_capacitance=0,
     )
     
+    # ---- Create Transmon Circuit by Adding a Shunt Capacitor Branch ----
     q1 = TransmonCircuit(
-        C_S=C,
-        dcsquid=q1_dcsquid
+        dcsquid=q1_dcsquid,
+        shunt_capacitance=C,
+        coupling_capacitance=C_C
     )
 
     # ---- Create the Larger Circuit Graph Object (G = (V, E)) ----
@@ -64,26 +68,18 @@ def main():
     # ---- Create Circuit Object From Graph ----
     circuit = Circuit(circuit_graph)
     
-    transmons, EC_matrix = quantize(circuit=circuit, n=n, PHI_off=[], PHI_on=[])
+    transmons, EC_matrix = quantize(circuit=circuit, n=n)
         
     n_full = n_trunc ** len(transmons)
     
-    for k in range(len(transmons)):
-        print(f"n['energy'][:2,:2]: ") 
-        print(transmons[k].n["energy"][:2,:2])
-        print(f"n Hermitian = {np.allclose(transmons[k].n["energy"], transmons[k].n["energy"].conj().T)}")
-        print(f"n Unitary = {np.allclose(np.eye(len(transmons[k].n["energy"])), transmons[k].n["energy"] @ transmons[k].n["energy"].conj().T)}")
+    print(f"Full Hilbert space dimension: {n_full}")
     
-    # ---- Create Quantum States |0>, |1>, and the projector onto the computational subspace H_2 ----
-    zero_state = Wavefunction(basis_to_coefs={"energy" : np.array([1] + (n_full - 1) * [0])})
-    one_state  = Wavefunction(basis_to_coefs={"energy" : np.array([0] + [1] + (n_full - 2) * [0])})
-    
-    P_Q = Operator(
-        basis_to_matrix={"energy": np.outer(to_ket(zero_state["energy"]), to_bra(zero_state["energy"])) + np.outer(to_ket(one_state["energy"]), to_bra(one_state["energy"]))}
-    )
-    
+    # ---- Create individual Subsystem Quantum Basis States ----
+    z = Wavefunction(basis_to_coefs={"energy" : np.array([1] + (n_trunc - 1) * [0])})
+    o = Wavefunction(basis_to_coefs={"energy" : np.array([0] + [1] + (n_trunc - 2) * [0])})
+
     # ---- Creating Our Initial Quantum State in Energy/Fock Basis, |0> ----
-    initial_state = Wavefunction(basis_to_coefs={"energy" : zero_state["energy"].copy()})
+    initial_state = Wavefunction(basis_to_coefs={"energy" : z["energy"].copy()})
     
     if PLOT:
         plt.ion()
@@ -106,9 +102,11 @@ def main():
     # Target Unitary rotation
     theta_target = np.pi/2
     
+    # Qubit to rotate
+    k = 0
+    
     # Number of kicks in pulse train
     N_kicks = 47
-    # N = int(np.round(theta_target / theta))
     
     system = System(
         transmons=transmons,
@@ -118,48 +116,60 @@ def main():
         initial_state=initial_state,
         ramp=ramp,
         N_kicks=N_kicks,
+        PHI_off=[], 
+        PHI_on=[]
     )
     
-    RY_TARGET = Operator(
-        basis_to_matrix={"energy": np.array([
-                [np.cos(theta_target / 2), -np.sin(theta_target / 2)],
-                [np.sin(theta_target / 2), np.cos(theta_target / 2)]
-            ])}
-    )
+    U_TARGET = get_RX_target(theta_target)
 
     for i in range(1):
         system.state.reset_accumulated_unitary() 
         
-        system.RY(k=0)
+        system.RX(k)
+        
+        # (n_full x n_full)
         U = system.state.get_accumulated_unitary()
+        
+        # NOTE: The logical bit strings are in base n_trunc, i.e.
+        # |b2, b1, b0> = b2 * (n_trunc**2) + b1 * (n_trunc**1) + b0 * (n_trunc**0)
+        # len(|b2, b1, b0>) = n_trunc**3
 
-        U_Q_full = Operator(
-            basis_to_matrix={"energy" : P_Q["energy"] @ U["energy"] @ P_Q["energy"]}
+        
+         # ---- Calculate Gate Fidelity for Qubit 0 ----
+        # Want to project onto the first k=0 qubit computational subspace
+        # Want P|psi> = a|0> + b|1>
+        # (n_full x n_full)
+        P_0 = Operator(
+            basis_to_matrix={
+                "energy": np.outer(to_ket(z["energy"]), to_bra(z["energy"])) + \
+                            np.outer(to_ket(o["energy"]), to_bra(o["energy"]))
+                }
         )
-        
-        U_Q = Operator(
-            basis_to_matrix={"energy": U_Q_full["energy"][:2, :2]}
+        # (n_full x n_full)
+        U_Q0 = Operator(
+            basis_to_matrix={"energy": P_0["energy"] @ U["energy"] @ P_0["energy"]}
         )
-        
-        L1 = get_L1(U=U_Q, basis="energy")
-        
-        # print(f"Leakage Metric: {leakage}")
-        process_fidelity = get_process_fidelity(U_Q=U_Q, U_target=RY_TARGET, basis="energy")
-        # print(f"Process Fidelity: {process_fidelity}")
-        avg_gate_fidelity = get_average_gate_fidelity(process_fidelity=process_fidelity, L1=L1)
-        # print(f"Average Gate Fidelity in the Absence of a Loss Channel: {avg_gate_fidelity}")
-        print(f"L1: {L1}")
-        r = np.linalg.norm(get_pauli_coefs(U=U_Q, basis="energy"))
-        print(f"r: {r}")
-        print(f"Fidelity: {avg_gate_fidelity}")
+        idx_0 = [0, n_trunc**0]
+        # (2 x 2)
+        U_Q0_2x2 = Operator(
+            basis_to_matrix={"energy": U_Q0["energy"][np.ix_(idx_0, idx_0)]}
+        )
+        L1_0 = get_L1(U=U_Q0_2x2, basis="energy")
+        process_fidelity_0 = get_process_fidelity(U_Q=U_Q0_2x2, U_target=U_TARGET, basis="energy")
+        avg_gate_fidelity_0 = get_average_gate_fidelity(process_fidelity=process_fidelity_0, L1=L1_0)
+        r_0 = np.linalg.norm(get_pauli_coefs(U=U_Q0_2x2, basis="energy"))
+        print(f"Gate on Qubit {0} Fidelity: {avg_gate_fidelity_0}")
         
         probabilities = system.state.get_probabilities("energy")
         
+        rho = np.outer(system.state["energy"], system.state["energy"].conj())
+        
+        bx = np.trace(rho[:2, :2] @ X).real
+        by = np.trace(rho[:2, :2] @ Y).real
+        bz = np.trace(rho[:2, :2] @ Z).real
+        
         
         if PLOT:
-            state_azimuth, state_inclination = get_spherical_coords(alpha=system.state["energy"][0],
-                                                                    beta=system.state["energy"][1])
-            bx, by, bz = get_rectangular_coords(azimuth=state_azimuth, inclination=state_inclination)
             
             bx_hist.append(bx)
             by_hist.append(by)
@@ -254,7 +264,7 @@ def main():
             fig.canvas.flush_events()
 
         print(f"Final State: ")
-        print(system.state["energy"][:3])
+        print(system.state["energy"])
     
     if PLOT:
         plt.ioff()
