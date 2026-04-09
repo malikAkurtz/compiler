@@ -1,7 +1,7 @@
 import numpy as np
 from typing import Optional
 
-from PauliMatrices import PAULI_MATRICES
+from Matrices import PAULI_MATRICES
 
 class Operator():
     """

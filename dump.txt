@@ -308,6 +308,9 @@ from Branch import *
 class DCSQUID():
     _id = 0
     def __init__(self, gnd: Node, external_flux: float, left_josephson_current: float, right_josephson_current: float, left_josephson_capacitance: float, right_josephson_capacitance: float) -> None:
+        self.J_L = left_josephson_current
+        self.J_R = right_josephson_current
+        
         # ---- Store Alias to Ground Node ----
         self.gnd = gnd
         
@@ -1309,17 +1312,12 @@ def main():
         PHI_on=[]
     )
     
-    RY_TARGET = Operator(
-        basis_to_matrix={"energy": np.array([
-                [np.cos(theta_target / 2), -np.sin(theta_target / 2)],
-                [np.sin(theta_target / 2), np.cos(theta_target / 2)]
-            ])}
-    )
+    U_TARGET = get_RX_target(theta_target)
 
     for i in range(1):
         system.state.reset_accumulated_unitary() 
         
-        system.RY(k)
+        system.RX(k)
         
         # (n_full x n_full)
         U = system.state.get_accumulated_unitary()
@@ -1331,7 +1329,7 @@ def main():
         
          # ---- Calculate Gate Fidelity for Qubit 0 ----
         # Want to project onto the first k=0 qubit computational subspace
-        # Want P|psi> = a|000> + b|100>
+        # Want P|psi> = a|0> + b|1>
         # (n_full x n_full)
         P_0 = Operator(
             basis_to_matrix={
@@ -1349,7 +1347,7 @@ def main():
             basis_to_matrix={"energy": U_Q0["energy"][np.ix_(idx_0, idx_0)]}
         )
         L1_0 = get_L1(U=U_Q0_2x2, basis="energy")
-        process_fidelity_0 = get_process_fidelity(U_Q=U_Q0_2x2, U_target=RY_TARGET, basis="energy")
+        process_fidelity_0 = get_process_fidelity(U_Q=U_Q0_2x2, U_target=U_TARGET, basis="energy")
         avg_gate_fidelity_0 = get_average_gate_fidelity(process_fidelity=process_fidelity_0, L1=L1_0)
         r_0 = np.linalg.norm(get_pauli_coefs(U=U_Q0_2x2, basis="energy"))
         print(f"Gate on Qubit {0} Fidelity: {avg_gate_fidelity_0}")
@@ -1479,10 +1477,12 @@ from Transmon import Transmon
 from Operator import Operator
 from Wavefunction import Wavefunction
 from constants import *
+from DCSQUID import DCSQUID
 
 class System():
-    def __init__(self, transmons: list[Transmon], EC_matrix: np.ndarray, thetas: np.ndarray, clock_multiplier: int, initial_state: Wavefunction, ramp: list[str], N_kicks: int, PHI_off: np.ndarray, PHI_on: np.ndarray):
+    def __init__(self, transmons: list[Transmon], dcsquids: list[DCSQUID], EC_matrix: np.ndarray, thetas: np.ndarray, clock_multiplier: int, initial_state: Wavefunction, ramp: list[str], N_kicks: int, PHI_off: np.ndarray, PHI_on: np.ndarray):
         self.transmons     = transmons
+        self.dcsquids      = dcsquids
         self.EC_matrix     = EC_matrix
         self.thetas        = thetas
         self.M             = clock_multiplier
@@ -1492,6 +1492,7 @@ class System():
         self.PHI_off       = PHI_off
         self.PHI_on        = PHI_on
         
+        self.n_charge      = len(self.transmons[0].n["energy"])
         self.n_full        = len(self.state["energy"]) # Dimension of full Hilbert space of the system
         self.n_trunc       = int(round(self.n_full**(1/len(self.transmons))))
         
@@ -1583,19 +1584,19 @@ class System():
             
         # ---- Rebuild Coupling Hamiltonain HC ----
         coupling_sum = 0
-        for k in range(len(self.transmons)):
-            for l in range(len(self.transmons)):
-                if k == l:
+        for i in range(len(self.transmons)):
+            for j in range(len(self.transmons)):
+                if i == j:
                     continue
                 else:   
-                    coupling_sum += (self.EC_matrix[k][l] * self.sys_transmons[k].operators["n"]["energy"] @ self.sys_transmons[l].operators["n"]["energy"])
+                    coupling_sum += (self.EC_matrix[i][j] * self.sys_transmons[i].operators["n"]["energy"] @ self.sys_transmons[j].operators["n"]["energy"])
                 
         self.HC = Operator(
             basis_to_matrix={"energy" : 4 * coupling_sum}
         )
         
         # ---- Rebuild the Unperturbed Hamiltonian H0 ----
-        total_H0 = sum(self.sys_operators[j]["H0"]["energy"] for j in range(len(self.transmons)))
+        total_H0 = sum(self.sys_transmons[j].operators["H0"]["energy"] for j in range(len(self.transmons)))
         self.H0 = Operator(
             basis_to_matrix={"energy": total_H0 + self.HC["energy"]}
         )
@@ -1627,7 +1628,48 @@ class System():
             self.state.apply(self.U_M)
         
         self.off_ramp_evolve(k)
+        
+    def RX(self, k: int):
+        
+        # RZ(pi/2)
+        for _ in range(int((1 * self.M) / 4)):
+            self.state.apply(self.U_1)
+        
+        # RY(theta_target)
+        self.RY(k)
+        
+        # RZ(-pi/2) = RZ(3pi/2)
+        for _ in range(int((3 * self.M) / 4)):
+            self.state.apply(self.U_1)
             
+    def fSim(self):
+        self.set_coupler_flux(
+            k=1, 
+            EJ_new=DCSQUID.calculate_effective_EJ(
+                PHI_ext=self.PHI_on[1], 
+                JL=self.dcsquids[1].J_L, 
+                JR=self.dcsquids[1].J_R
+                ),
+            n=self.n_charge
+            )
+        
+        hold_time = 17e-9  # 17 ns
+        for _ in range(int(round(hold_time / self.T_c))):
+            self.state.apply(self.U_1)
+            
+        self.set_coupler_flux(
+            k=1, 
+            EJ_new=DCSQUID.calculate_effective_EJ(
+                PHI_ext=self.PHI_off[1], 
+                JL=self.dcsquids[1].J_L, 
+                JR=self.dcsquids[1].J_R
+                ),
+            n=self.n_charge
+            )
+    
+    def CZ(self):
+        alpha = np.arcsin(np.sqrt(((1/2) - np.sin()) / ()))
+        
     def on_ramp_evolve(self, k: int):
     
         for sequence in self.ramp:
@@ -1797,6 +1839,7 @@ class TransmonCircuit():
 import numpy as np
 
 from PauliMatrices import PAULI_MATRICES
+from Operator import Operator
 
 def get_spherical_coords(alpha, beta):
     norm = np.sqrt(np.abs(alpha)**2 + np.abs(beta)**2)
@@ -1880,6 +1923,23 @@ def get_pauli_coefs(U: np.ndarray, basis: str):
             
         return coefs
 
+def get_RY_target(theta_target: float):
+    RY_TARGET = Operator(
+        basis_to_matrix={"energy": np.array([
+                [np.cos(theta_target / 2), -np.sin(theta_target / 2)],
+                [np.sin(theta_target / 2), np.cos(theta_target / 2)]
+            ])}
+    )
+    return RY_TARGET
+
+def get_RX_target(theta_target: float):
+    RX_TARGET = Operator(
+        basis_to_matrix={"energy": np.array([
+                [np.cos(theta_target / 2), -1j * np.sin(theta_target / 2)],
+                [-1j * np.sin(theta_target / 2), np.cos(theta_target / 2)]
+            ])}
+    )
+    return RX_TARGET
 
 
 

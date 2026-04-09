@@ -7,7 +7,7 @@ from System import System
 from Branch import *
 from Operator import Operator
 from Wavefunction import Wavefunction
-from PauliMatrices import X, Y, Z
+from Matrices import X, Y, Z
 from utils import *
 from constants import *
 from fidelity import *
@@ -81,6 +81,8 @@ def main():
         left_josephson_capacitance=0,
         right_josephson_capacitance=0,
     )
+    
+    dcsquids = [q1_dcsquid, qc_dcsquid, q2_dcsquid]
 
     # ---- Create Transmon Circuits by Adding a Shunt Capacitor Branch to each DCSQUID ----
     q1 = TransmonCircuit(
@@ -159,41 +161,32 @@ def main():
 
         # Store Bloch vector history for trail
         bx_hist, by_hist, bz_hist = [], [], []
-            
+             
+    system = System(
+        transmons=transmons,
+        dcsquids=dcsquids,
+        EC_matrix=EC_matrix,
+        thetas=THETAS,
+        clock_multiplier=clock_multiplier,
+        initial_state=initial_state,
+        ramp=ramp,
+        PHI_off=PHI_off,
+        PHI_on=PHI_on
+    )
+    
     # Target Unitary rotation
     theta_target = np.pi/2
     
     # Qubit to rotate
     k = 0
     
-    # Number of kicks in pulse train
-    N_kicks = 47
-    N_kicks = int(np.round(theta_target / THETAS[0]))
-    
-    system = System(
-        transmons=transmons,
-        EC_matrix=EC_matrix,
-        thetas=THETAS,
-        clock_multiplier=clock_multiplier,
-        initial_state=initial_state,
-        ramp=ramp,
-        N_kicks=N_kicks,
-        PHI_off=PHI_off,
-        PHI_on=PHI_on
-    )
-    
     # Target Unitary on the computational subspace of a single qubit
-    RY_TARGET = Operator(
-        basis_to_matrix={"energy": np.array([
-                [np.cos(theta_target / 2), -np.sin(theta_target / 2)],
-                [np.sin(theta_target / 2), np.cos(theta_target / 2)]
-            ])}
-    )
+    U_TARGET = get_RX_target(theta_target)
 
     for i in range(1):
         system.state.reset_accumulated_unitary() 
         
-        system.RY(k)
+        system.RX(k, theta_target)
         
         # (n_full x n_full)
         U = system.state.get_accumulated_unitary()
@@ -222,7 +215,7 @@ def main():
             basis_to_matrix={"energy": U_Q0["energy"][np.ix_(idx_0, idx_0)]}
         )
         L1_0 = get_L1(U=U_Q0_2x2, basis="energy")
-        process_fidelity_0 = get_process_fidelity(U_Q=U_Q0_2x2, U_target=RY_TARGET, basis="energy")
+        process_fidelity_0 = get_process_fidelity(U_Q=U_Q0_2x2, U_target=U_TARGET, basis="energy")
         avg_gate_fidelity_0 = get_average_gate_fidelity(process_fidelity=process_fidelity_0, L1=L1_0)
         r_0 = np.linalg.norm(get_pauli_coefs(U=U_Q0_2x2, basis="energy"))
         print(f"Gate on Qubit {0} Fidelity: {avg_gate_fidelity_0}")

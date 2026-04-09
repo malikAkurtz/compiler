@@ -1,6 +1,6 @@
 import numpy as np
 
-from PauliMatrices import PAULI_MATRICES
+from Matrices import PAULI_MATRICES
 from Operator import Operator
 
 def get_spherical_coords(alpha, beta):
@@ -102,4 +102,19 @@ def get_RX_target(theta_target: float):
             ])}
     )
     return RX_TARGET
+
+def get_fSim_target(theta: float, phi: float):
+    a = np.cos(theta)
+    b = -1j * np.sin(theta)
+    c = np.exp(-1j * phi)
+    
+    fSim_TARGET = Operator(
+        basis_to_matrix={"energy" : np.array([
+                [1.0, 0.0, 0.0, 0.0],
+                [0.0, a, b, 0.0],
+                [0.0, b, a, 0.0],
+                [0.0, 0.0, 0.0, c]
+            ])}
+    )
+    return fSim_TARGET
 

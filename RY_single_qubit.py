@@ -14,7 +14,7 @@ from Quantize import quantize
 from Branch import *
 from DCSQUID import DCSQUID
 from TransmonCircuit import TransmonCircuit
-from PauliMatrices import X, Y, Z
+from Matrices import X, Y, Z
 
 
 
@@ -26,6 +26,7 @@ def main():
     n_trunc            = 7              # number of states to truncate to for each transmon
     clock_multiplier   = 8
     ramp               = ['01000000', '11000000', '10000000', '00000000', '00000000']
+    ramp               = []
     
     # ---- Transmon Circuit Hyper-parameters ----
     EJ_EC = 69
@@ -98,34 +99,31 @@ def main():
 
         # Store Bloch vector history for trail
         bx_hist, by_hist, bz_hist = [], [], []
-            
+    
+    system = System(
+        transmons=transmons,
+        dcsquids=[q1_dcsquid],
+        EC_matrix=EC_matrix,
+        thetas=THETAS,
+        clock_multiplier=clock_multiplier,
+        initial_state=initial_state,
+        ramp=ramp,
+        PHI_off=[], 
+        PHI_on=[]
+    )
+    
     # Target Unitary rotation
     theta_target = np.pi/2
     
     # Qubit to rotate
     k = 0
     
-    # Number of kicks in pulse train
-    N_kicks = 47
-    
-    system = System(
-        transmons=transmons,
-        EC_matrix=EC_matrix,
-        thetas=THETAS,
-        clock_multiplier=clock_multiplier,
-        initial_state=initial_state,
-        ramp=ramp,
-        N_kicks=N_kicks,
-        PHI_off=[], 
-        PHI_on=[]
-    )
-    
     U_TARGET = get_RX_target(theta_target)
 
     for i in range(1):
         system.state.reset_accumulated_unitary() 
         
-        system.RX(k)
+        system.RX(k=k, theta_target=theta_target)
         
         # (n_full x n_full)
         U = system.state.get_accumulated_unitary()

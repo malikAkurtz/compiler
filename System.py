@@ -10,7 +10,7 @@ from constants import *
 from DCSQUID import DCSQUID
 
 class System():
-    def __init__(self, transmons: list[Transmon], dcsquids: list[DCSQUID], EC_matrix: np.ndarray, thetas: np.ndarray, clock_multiplier: int, initial_state: Wavefunction, ramp: list[str], N_kicks: int, PHI_off: np.ndarray, PHI_on: np.ndarray):
+    def __init__(self, transmons: list[Transmon], dcsquids: list[DCSQUID], EC_matrix: np.ndarray, thetas: np.ndarray, clock_multiplier: int, initial_state: Wavefunction, ramp: list[str], PHI_off: np.ndarray, PHI_on: np.ndarray):
         self.transmons     = transmons
         self.dcsquids      = dcsquids
         self.EC_matrix     = EC_matrix
@@ -18,7 +18,6 @@ class System():
         self.M             = clock_multiplier
         self.state         = initial_state  
         self.ramp          = ramp
-        self.N_kicks       = N_kicks
         self.PHI_off       = PHI_off
         self.PHI_on        = PHI_on
         
@@ -148,31 +147,33 @@ class System():
                 )
             )
 
-    def RY(self, k: int):
+    def RY(self, k: int, theta_target: float):
         
         self.on_ramp_evolve(k)
+        
+        N_kicks = int(np.round(theta_target/self.thetas[k]))
                 
-        for _ in range(self.N_kicks):
+        for _ in range(N_kicks):
             self.state.apply(self.transmon_to_kick[k])
             
             self.state.apply(self.U_M)
         
         self.off_ramp_evolve(k)
         
-    def RX(self, k: int):
+    def RX(self, k: int, theta_target: float):
         
         # RZ(pi/2)
         for _ in range(int((1 * self.M) / 4)):
             self.state.apply(self.U_1)
         
         # RY(theta_target)
-        self.RY(k)
+        self.RY(k, theta_target)
         
         # RZ(-pi/2) = RZ(3pi/2)
         for _ in range(int((3 * self.M) / 4)):
             self.state.apply(self.U_1)
             
-    def fSim(self):
+    def fSim(self, duration):
         self.set_coupler_flux(
             k=1, 
             EJ_new=DCSQUID.calculate_effective_EJ(
@@ -183,8 +184,7 @@ class System():
             n=self.n_charge
             )
         
-        hold_time = 17e-9  # 17 ns
-        for _ in range(int(round(hold_time / self.T_c))):
+        for _ in range(int(round(duration / self.T_c))):
             self.state.apply(self.U_1)
             
         self.set_coupler_flux(
@@ -198,7 +198,23 @@ class System():
             )
     
     def CZ(self):
+        # Correspond to hold duration of 17 ns
+        theta = 0.7732102591991971
+        phi = -3.1294047493918216
         
+        alpha = np.arcsin(np.sqrt(((1/2) - np.sin(phi/2)**2) / (np.sin(theta)**2 - np.sin(phi/2)**2)))
+        eta   = np.arctan((np.tan(alpha)*np.sin(theta)) / (np.sin(phi/2))) + ((np.pi/2) * (1 - np.sign(np.sin(phi/2))))
+        eps   = np.arctan((np.tan(alpha)*np.cos(theta)) / (np.cos(phi/2))) + ((np.pi/2) * (1 - np.sign(np.cos(phi/2))))
+        
+        self.RX(k=0, theta_target=eps)
+        self.RX(k=2, theta_target=eta)
+        
+        self.fSim(duration=17e-9)
+        
+        self.RX(k=0, theta_target=2*alpha)
+        
+        
+            
     def on_ramp_evolve(self, k: int):
     
         for sequence in self.ramp:
