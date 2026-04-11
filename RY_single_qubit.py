@@ -58,6 +58,7 @@ def main():
     
     # ---- Create Transmon Circuit by Adding a Shunt Capacitor Branch ----
     q1 = TransmonCircuit(
+        gnd=gnd,
         dcsquid=q1_dcsquid,
         shunt_capacitance=C,
         coupling_capacitance=C_C
@@ -68,6 +69,9 @@ def main():
     
     # ---- Create Circuit Object From Graph ----
     circuit = Circuit(circuit_graph)
+    
+    # ---- Build Matrices ----
+    circuit.build()
     
     transmons, EC_matrix = quantize(circuit=circuit, n=n)
         
@@ -118,12 +122,12 @@ def main():
     # Qubit to rotate
     k = 0
     
-    U_TARGET = get_RX_target(theta_target)
+    U_TARGET = get_RY_target(theta_target)
 
     for i in range(1):
         system.state.reset_accumulated_unitary() 
         
-        system.RX(k=k, theta_target=theta_target)
+        system.RY(k=k, theta_target=theta_target)
         
         # (n_full x n_full)
         U = system.state.get_accumulated_unitary()

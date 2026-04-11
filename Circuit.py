@@ -26,8 +26,13 @@ class Circuit:
     # =====================================================================
 
     def __init__(self, graph: Graph):
-        self.circuit_graph                                    = graph
-        self.labels                                           = [v.label for v in graph.vertices]
+        self.graph  = graph
+        self.labels = [v.label for v in graph.vertices]
+        
+    # =====================================================================
+    #   Orchestrates Matrix Construction
+    # =====================================================================
+    def build(self) -> None:
         self.capacitive_sub_graph, self.inductive_sub_graph   = self._build_sub_graphs()
         self.josephson_elements                               = [e for e in self.inductive_sub_graph.edges if isinstance(e, JosephsonElement)]
         self.active_nodes, self.passive_nodes                 = self._partition_nodes()
@@ -35,15 +40,15 @@ class Circuit:
         self.P                                                = len(self.active_nodes) + len(self.passive_nodes) + 1 # + 1 for ground
         self.capacitance_matrix, self.inv_inductance_matrix   = self._build_matrices()
         self.inv_capacitance_matrix                           = np.linalg.inv(self.capacitance_matrix)
-
+        
     # =====================================================================
     #   Sub-Graph Construction
     # =====================================================================
 
     def _build_sub_graphs(self):
         """Split master graph into capacitive and inductive sub-graphs."""
-        nodes    = self.circuit_graph.vertices
-        branches = self.circuit_graph.edges
+        nodes    = self.graph.vertices
+        branches = self.graph.edges
         # Capacitors
         capacitive_branches = [b for b in branches if isinstance(b, CapacitiveElement)]
         # Inductors and Josephson elements
@@ -59,7 +64,7 @@ class Circuit:
         """Classify nodes as active (connected to inductor/JJ) or passive."""
         active, passive = [], []
         
-        for node in self.circuit_graph.vertices:
+        for node in self.graph.vertices:
             # Ground node is neither active nor passive
             if node.label == "gnd":
                 continue
@@ -88,7 +93,7 @@ class Circuit:
         capacitance_matrix        = np.zeros((self.P, self.P))
         inverse_inductance_matrix = np.zeros((self.P, self.P))
 
-        for branch in self.circuit_graph.edges:
+        for branch in self.graph.edges:
             node1_label = branch.nodes[0].label
             node2_label = branch.nodes[1].label
             i = self.labels.index(node1_label)
@@ -117,7 +122,7 @@ class Circuit:
 
     def connectivity(self):
         s = "--- Circuit Connectivity ---\n"
-        for node in self.circuit_graph.vertices:
+        for node in self.graph.vertices:
             s += f"Node '{node.label}':\n"
             for branch in node.branches:
                 other = [n for n in branch.nodes if n != node]

@@ -83,7 +83,7 @@ def main():
         right_josephson_capacitance=0,
     )
 
-    # ---- Create Transmon Circuits by Adding a Shunt Capacitor Branch to each DCSQUID ----
+    # ---- Create Transmon Circuits by Adding a Shunt Capacitor and Coupling Capacitor Branch to each DCSQUID ----
     q1 = TransmonCircuit(
         dcsquid=q1_dcsquid,
         shunt_capacitance=C_1,
@@ -116,13 +116,16 @@ def main():
     qc.island.branches.append(cap_2C)
 
     # ---- Create the Larger Circuit Graph Object (G = (V, E)) ----
-    circuit_graph = Graph(
-        vertices=[gnd, q1.island, qc.island, q2.island], 
-        edges=q1.branches + qc.branches + q2.branches
+    circuit_graph = graph=Graph(
+            vertices=[gnd, q1.island, qc.island, q2.island],
+            edges=q1.branches + qc.branches + q2.branches + cap_12 + cap_1C + cap_2C
         )
     
     # ---- Create Circuit Object From Graph ----
     circuit = Circuit(circuit_graph)
+    
+    # ---- Build Matrices ----
+    circuit.build()
     
     transmons, EC_matrix = quantize(circuit=circuit, n=n)
         

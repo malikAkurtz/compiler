@@ -20,8 +20,8 @@ PLOT = True
 
 def main():
     # ---- Shared Hyper-parameters ----
-    n                  = 51            # Number of charge states, -n/2 : n/2 for each transmon
-    n_trunc            = 5              # number of states to truncate to for each transmon
+    n                  = 201            # Number of charge states, -n/2 : n/2 for each transmon
+    n_trunc            = 7              # number of states to truncate to for each transmon
     clock_multiplier   = 8
     ramp               = []
     # ramp               = ['01000000', '11000000', '10000000', '00000000', '00000000']
@@ -86,18 +86,21 @@ def main():
 
     # ---- Create Transmon Circuits by Adding a Shunt Capacitor Branch to each DCSQUID ----
     q1 = TransmonCircuit(
+        gnd=gnd,
         dcsquid=q1_dcsquid,
         shunt_capacitance=C_1,
         coupling_capacitance=C_1e
     )
     
     qc = TransmonCircuit(
+        gnd=gnd,
         dcsquid=qc_dcsquid,
         shunt_capacitance=C_C,
         coupling_capacitance=0
     )
     
     q2 = TransmonCircuit(
+        gnd=gnd,
         dcsquid=q2_dcsquid,
         shunt_capacitance=C_2,
         coupling_capacitance=C_2e
@@ -119,11 +122,14 @@ def main():
     # ---- Create the Larger Circuit Graph Object (G = (V, E)) ----
     circuit_graph = Graph(
         vertices=[gnd, q1.island, qc.island, q2.island], 
-        edges=q1.branches + qc.branches + q2.branches
+        edges=q1.branches + qc.branches + q2.branches + [cap_12] + [cap_1C] + [cap_2C]
         )
     
     # ---- Create Circuit Object From Graph ----
     circuit = Circuit(circuit_graph)
+    
+    # ---- Build Matrices ----
+    circuit.build()
     
     transmons, EC_matrix = quantize(circuit=circuit, n=n)
         
@@ -181,12 +187,12 @@ def main():
     k = 0
     
     # Target Unitary on the computational subspace of a single qubit
-    U_TARGET = get_RX_target(theta_target)
+    U_TARGET = get_RY_target(theta_target)
 
     for i in range(1):
         system.state.reset_accumulated_unitary() 
         
-        system.RX(k, theta_target)
+        system.RY(k, theta_target)
         
         # (n_full x n_full)
         U = system.state.get_accumulated_unitary()
