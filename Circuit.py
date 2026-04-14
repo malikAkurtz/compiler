@@ -27,7 +27,7 @@ class Circuit:
 
     def __init__(self, graph: Graph):
         self.graph  = graph
-        self.labels = [v.label for v in graph.vertices]
+        self.ids    = [v._id for v in graph.vertices]
         
     # =====================================================================
     #   Orchestrates Matrix Construction
@@ -39,6 +39,7 @@ class Circuit:
         self.N                                                = len(self.active_nodes)
         self.P                                                = len(self.active_nodes) + len(self.passive_nodes) + 1 # + 1 for ground
         self.capacitance_matrix, self.inv_inductance_matrix   = self._build_matrices()
+        print(self.capacitance_matrix)
         self.inv_capacitance_matrix                           = np.linalg.inv(self.capacitance_matrix)
         
     # =====================================================================
@@ -66,7 +67,7 @@ class Circuit:
         
         for node in self.graph.vertices:
             # Ground node is neither active nor passive
-            if node.label == "gnd":
+            if node.id == 0:
                 continue
             
             _, inductive_degree = node._get_degree()
@@ -94,10 +95,9 @@ class Circuit:
         inverse_inductance_matrix = np.zeros((self.P, self.P))
 
         for branch in self.graph.edges:
-            node1_label = branch.nodes[0].label
-            node2_label = branch.nodes[1].label
-            i = self.labels.index(node1_label)
-            j = self.labels.index(node2_label)
+
+            i = branch.nodes[0].id
+            j = branch.nodes[1].id
 
             if isinstance(branch, Capacitor):
                 capacitance_matrix[i][j] -= branch.C
@@ -108,8 +108,9 @@ class Circuit:
 
         for i in range(self.P):
             capacitance_matrix[i][i]        = -np.sum(capacitance_matrix[i])
-            inverse_inductance_matrix[j][j] = -np.sum(inverse_inductance_matrix[j])
+            inverse_inductance_matrix[i][i] = -np.sum(inverse_inductance_matrix[i])
 
+        print(capacitance_matrix)
         # Remove the row/col corresponding to gnd node
         capacitance_matrix = np.delete(np.delete(capacitance_matrix, 0, axis=0), 0, axis=1)
         inverse_inductance_matrix = np.delete(np.delete(inverse_inductance_matrix, 0, axis=0), 0, axis=1)
@@ -123,10 +124,10 @@ class Circuit:
     def connectivity(self):
         s = "--- Circuit Connectivity ---\n"
         for node in self.graph.vertices:
-            s += f"Node '{node.label}':\n"
+            s += f"Node '{node.id}':\n"
             for branch in node.branches:
                 other = [n for n in branch.nodes if n != node]
-                conn = f"connected to {other[0].label}" if other else "grounded"
+                conn = f"connected to {other[0]._id}" if other else "grounded"
                 if isinstance(branch, Capacitor):
                     s += f"  - Capacitor ({branch.C:.2e}) {conn}\n"
                 elif isinstance(branch, Inductor):

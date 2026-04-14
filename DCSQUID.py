@@ -1,15 +1,13 @@
 
 from Branch import *
 from Circuit import Circuit
-class DCSQUID(Circuit):
-    _id = 0
+class DCSQUIDCircuit(Circuit):
     def __init__(self, gnd: Node, external_flux: float, left_josephson_current: float, right_josephson_current: float, left_josephson_capacitance: float, right_josephson_capacitance: float) -> None:
         self.J_L = left_josephson_current
         self.J_R = right_josephson_current
         
         # ---- Create the Island, Stores Net Guage-Invariant Phase Difference Across the Josephson Junction ----
-        self.island = Node(label=str(f"q_{DCSQUID._id}"), branches=[])
-        DCSQUID._id += 1
+        self.island = Node(branches=[])
         
         # ---- Create branches belonging to the DCSQUID ----
         self.branches = []
@@ -27,7 +25,7 @@ class DCSQUID(Circuit):
                 gnd.branches.append(capacitor)
                 
         # ---- Calculate Effective Josphson Energy as a Function of PHI_ext ----
-        EJ = DCSQUID.calculate_effective_EJ(external_flux, left_josephson_current, right_josephson_current)
+        EJ = DCSQUIDCircuit.calculate_effective_EJ(external_flux, left_josephson_current, right_josephson_current)
         
         # ---- Create a Josephson element that plays the role of both Josephson elements with EJ_eff ----
         josephson_element = JosephsonElement(josephson_energy=EJ, nodes=[self.island, gnd])

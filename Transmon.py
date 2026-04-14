@@ -42,8 +42,8 @@ class Transmon(QuantumOscillator):
         self.H0["energy"] = np.diag(energies)
 
         self.anharmonicity           = (energies[2] - energies[1]) - (energies[1] - energies[0])
-        self.qubit_frequency         = (energies[1] - energies[0]) / h 
-        self.qubit_angular_frequency = self.qubit_frequency * (2*np.pi)
+        self.frequency               = (energies[1] - energies[0]) / h
+        self.angular_frequency       = self.frequency * (2*np.pi)
     
         # NOTE: I need to understand this better, Claude gave me this fix and I don't know why it works
         # Fix eigenvector phases so that <psi_i|n|psi_{i+1}> is negative imaginary

@@ -5,9 +5,11 @@ from constants import REDUCED_FLUX_QUANTUM
 
 ######################################## NODE CLASS ########################################
 class Node:
-    def __init__(self, label: str, branches: Optional[list[Branch]] = None):
-        # e.g. "a", "b", etc.
-        self.label = label
+    _id = 0
+    def __init__(self, branches: Optional[list[Branch]] = None):
+        self.id = Node._id
+        Node._id  += 1
+        
         # e.g [capacitor1, inductor1, JJ1, ...]
         self.branches = branches if branches is not None else []
 

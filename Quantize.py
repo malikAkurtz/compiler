@@ -11,6 +11,7 @@ import numpy as np
 from constants import *
 from Transmon import Transmon
 from Circuit import Circuit
+from HarmonicOscillator import HarmonicOscillator
 
 
 def quantize(circuit: Circuit, n: int):
@@ -25,17 +26,24 @@ def quantize(circuit: Circuit, n: int):
     """
     EC_matrix = (e**2 / 2) * circuit.inv_capacitance_matrix
     
-    transmons = []
+    systems = []
     
-    for k in range(len(circuit.josephson_elements)):
-        EJ    = circuit.josephson_elements[k].EJ
-        EC    = EC_matrix[k][k]
-        EJ_EC = EJ / EC
-        
-        transmons.append(Transmon(
-            EC=EC,
-            EJ_EC=EJ_EC,
-            n=n
+    if len(circuit.josephson_elements) > 0:
+        for k in range(len(circuit.josephson_elements)):
+            EJ    = circuit.josephson_elements[k].EJ
+            EC    = EC_matrix[k][k]
+            EJ_EC = EJ / EC
+            
+            systems.append(Transmon(
+                EC=EC,
+                EJ_EC=EJ_EC,
+                n=n
+            ))  
+    else:
+        systems.append(HarmonicOscillator(
+            capacitance=circuit.capacitance_matrix[0],
+            inductance=1/circuit.inv_inductance_matrix[0],
+            n_cut=n
         ))
         
-    return transmons, EC_matrix
+    return systems, EC_matrix

@@ -7,11 +7,13 @@ from Transmon import Transmon
 from Operator import Operator
 from Wavefunction import Wavefunction
 from constants import *
-from DCSQUID import DCSQUID
+from DCSQUID import DCSQUIDCircuit
+from QuantumOscillator import QuantumOscillator
+from HarmonicOscillator import HarmonicOscillator
 
 class System():
-    def __init__(self, transmons: list[Transmon], dcsquids: list[DCSQUID], EC_matrix: np.ndarray, thetas: np.ndarray, clock_multiplier: int, initial_state: Wavefunction, ramp: list[str], PHI_off: np.ndarray, PHI_on: np.ndarray):
-        self.transmons     = transmons
+    def __init__(self, subsystems: list[QuantumOscillator], dcsquids: list[DCSQUIDCircuit], EC_matrix: np.ndarray, thetas: np.ndarray, clock_multiplier: int, initial_state: Wavefunction, ramp: list[str], PHI_off: np.ndarray, PHI_on: np.ndarray):
+        self.subsystems    = subsystems
         self.dcsquids      = dcsquids
         self.EC_matrix     = EC_matrix
         self.thetas        = thetas
@@ -21,38 +23,43 @@ class System():
         self.PHI_off       = PHI_off
         self.PHI_on        = PHI_on
         
-        self.n_charge      = len(self.transmons[0].n["energy"])
+        self.n_charge      = len(self.subsystems[0].n["energy"])
         self.n_full        = len(self.state["energy"]) # Dimension of full Hilbert space of the system
-        self.n_trunc       = int(round(self.n_full**(1/len(self.transmons))))
+        self.n_trunc       = int(round(self.n_full**(1/len(self.subsystems))))
         
         # ---- Derive Qubit and Clock Periods ----
-        self.T_q           = np.array([(2*np.pi) / t.qubit_angular_frequency for t in self.transmons]) # Qubit period [s]
+        self.T_q           = np.array([(2*np.pi) / s.angular_frequency for s in self.subsystems]) # Qubit period [s]
         # We assume our computational qubits share the same angular frequency s.t. the clock period is well-defined
         self.T_c           = self.T_q[0] / self.M                                                      # Clock period [s]
         
-        # ---- Create New Transmons Specifically For the System (Embedded in Larger Hilbert Space of Dimension n_full)
-        self.sys_transmons = copy.deepcopy(self.transmons)
+        # ---- Create New Subsystems Specifically For the System (Embedded in Larger Hilbert Space of Dimension n_full)
+        self.sys_subsystems = copy.deepcopy(self.subsystems)
         
-        for k in range(len(self.transmons)):
-            sys_transmon = self.sys_transmons[k]
+        for k in range(len(self.subsystems)):
+            sys_subsystem = self.sys_subsystems[k]
             
-            for op_label in list(sys_transmon.operators.keys()):
+            for op_label in list(sys_subsystem.operators.keys()):
                 
-                sys_transmon.operators[op_label] = System.upgrade(
-                    operator=System.truncate(sys_transmon.operators[op_label], self.n_trunc),
+                sys_subsystem.operators[op_label] = System.upgrade(
+                    operator=System.truncate(sys_subsystem.operators[op_label], self.n_trunc),
                     n_trunc=self.n_trunc,
                     idx=k,
-                    num_subsystems=len(self.transmons)
+                    num_subsystems=len(self.subsystems)
                 )
 
         # ---- Derive Kick Operators for Logical Qubits
         self.transmon_to_kick = {}
         
-        for k in range(len(transmons)):
+        for k in range(len(self.subsystems)):
             
-            self.transmon_to_kick[k] = Operator(
-                        basis_to_matrix={"energy": expm(-1j * (thetas[k] / self.transmons[k].r) / 2 * self.transmons[k].n["energy"])}
-                    )
+            if isinstance(self.subsystems[k], Transmon):
+                self.transmon_to_kick[k] = Operator(
+                            basis_to_matrix={"energy": expm(-1j * (thetas[k] / self.subsystems[k].r) / 2 * self.subsystems[k].n["energy"])}
+                        )
+            elif isinstance(self.subsystems[k], HarmonicOscillator):
+                self.transmon_to_kick[k] = Operator(
+                            basis_to_matrix={"energy": expm((self.thetas[k] / 2) * (self.subsystems[k].creation["energy"] - self.subsystems[k].annihilation["energy"]))}
+                        )
             
             self.transmon_to_kick[k] = System.truncate(
                 operator=self.transmon_to_kick[k],
@@ -63,24 +70,24 @@ class System():
                 operator=self.transmon_to_kick[k],
                 n_trunc=self.n_trunc,
                 idx=k,
-                num_subsystems=len(self.transmons)
+                num_subsystems=len(self.subsystems)
             )
         
         # ---- Derive Coupling Hamiltonain HC ----
         coupling_sum = 0
-        for k in range(len(self.transmons)):
-            for l in range(len(self.transmons)):
+        for k in range(len(self.subsystems)):
+            for l in range(len(self.subsystems)):
                 if k == l:
                     continue
                 else:   
-                    coupling_sum += (self.EC_matrix[k][l] * self.sys_transmons[k].operators["n"]["energy"] @ self.sys_transmons[l].operators["n"]["energy"])
+                    coupling_sum += (self.EC_matrix[k][l] * self.sys_subsystems[k].operators["n"]["energy"] @ self.sys_subsystems[l].operators["n"]["energy"])
                 
         self.HC = Operator(
             basis_to_matrix={"energy" : 4 * coupling_sum}
         )
         
         # ---- Derive the Unperturbed Hamiltonian H0 ----
-        total_H0 = sum(self.sys_transmons[j].operators["H0"]["energy"] for j in range(len(self.transmons)))
+        total_H0 = sum(self.sys_subsystems[j].operators["H0"]["energy"] for j in range(len(self.subsystems)))
         self.H0 = Operator(
             basis_to_matrix={"energy": total_H0 + self.HC["energy"]}
         )
@@ -97,35 +104,35 @@ class System():
     def set_coupler_flux(self, k: int, EJ_new: float, n: int):
         # ---- Create a new transmon with an updated josephson energy ----
         new_transmon = Transmon(
-            EC=self.transmons[k].EC,
-            EJ_EC=(EJ_new/self.transmons[k].EC),
+            EC=self.subsystems[k].EC,
+            EJ_EC=(EJ_new/self.subsystems[k].EC),
             n=n
         )
         
-        # ---- Update sys_transmons[k]'s operators with new_transmon's operators ----
+        # ---- Update sys_subsystems[k]'s operators with new_transmon's operators ----
         for op_label, operator in new_transmon.operators.items():
-            self.sys_transmons[k].operators[op_label] = System.upgrade(
+            self.sys_subsystems[k].operators[op_label] = System.upgrade(
                 operator=System.truncate(operator, self.n_trunc),
                 n_trunc=self.n_trunc,
                 idx=k,
-                num_subsystems=len(self.transmons)
+                num_subsystems=len(self.subsystems)
             )
             
         # ---- Rebuild Coupling Hamiltonain HC ----
         coupling_sum = 0
-        for i in range(len(self.transmons)):
-            for j in range(len(self.transmons)):
+        for i in range(len(self.subsystems)):
+            for j in range(len(self.subsystems)):
                 if i == j:
                     continue
                 else:   
-                    coupling_sum += (self.EC_matrix[i][j] * self.sys_transmons[i].operators["n"]["energy"] @ self.sys_transmons[j].operators["n"]["energy"])
+                    coupling_sum += (self.EC_matrix[i][j] * self.sys_subsystems[i].operators["n"]["energy"] @ self.sys_subsystems[j].operators["n"]["energy"])
                 
         self.HC = Operator(
             basis_to_matrix={"energy" : 4 * coupling_sum}
         )
         
         # ---- Rebuild the Unperturbed Hamiltonian H0 ----
-        total_H0 = sum(self.sys_transmons[j].operators["H0"]["energy"] for j in range(len(self.transmons)))
+        total_H0 = sum(self.sys_subsystems[j].operators["H0"]["energy"] for j in range(len(self.subsystems)))
         self.H0 = Operator(
             basis_to_matrix={"energy": total_H0 + self.HC["energy"]}
         )
@@ -152,6 +159,7 @@ class System():
         self.on_ramp_evolve(k)
         
         N_kicks = int(np.round(theta_target/self.thetas[k]))
+        N_kicks = 47
                 
         for _ in range(N_kicks):
             self.state.apply(self.transmon_to_kick[k])
@@ -176,7 +184,7 @@ class System():
     def fSim(self, duration):
         self.set_coupler_flux(
             k=1, 
-            EJ_new=DCSQUID.calculate_effective_EJ(
+            EJ_new=DCSQUIDCircuit.calculate_effective_EJ(
                 PHI_ext=self.PHI_on[1], 
                 JL=self.dcsquids[1].J_L, 
                 JR=self.dcsquids[1].J_R

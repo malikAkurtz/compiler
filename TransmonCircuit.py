@@ -1,9 +1,9 @@
 from Branch import Node, Capacitor
-from DCSQUID import DCSQUID
+from DCSQUID import DCSQUIDCircuit
 from Branch import Graph
 
 class TransmonCircuit():
-    def __init__(self, gnd: Node, dcsquid: DCSQUID, shunt_capacitance: float, coupling_capacitance: float) -> None:
+    def __init__(self, gnd: Node, dcsquid: DCSQUIDCircuit, shunt_capacitance: float, coupling_capacitance: float) -> None:
         self.island = dcsquid.island
         self.branches = list(dcsquid.branches)
         
