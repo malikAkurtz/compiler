@@ -1,12 +1,16 @@
 #!/bin/bash
- 
+
 OUTPUT="dump.txt"
 > "$OUTPUT"
- 
-for file in *.py; do
+
+while IFS= read -r file; do
     echo "================ $file ================" >> "$OUTPUT"
     cat "$file" >> "$OUTPUT"
     echo -e "\n\n" >> "$OUTPUT"
-done
- 
+done < <(find . -name "*.py" \
+    -not -path "./.venv/*" \
+    -not -path "./.git/*" \
+    -not -path "*/__pycache__/*" \
+    | sort)
+
 echo "Done → $OUTPUT"

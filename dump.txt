@@ -1,8 +1,141 @@
-================ Branch.py ================
+================ ./circuits/__init__.py ================
+
+
+
+================ ./circuits/DCSQUIDCircuit.py ================
+
+from core.Branch import *
+from core.Circuit import Circuit
+class DCSQUIDCircuit(Circuit):
+    def __init__(self, gnd: Node, external_flux: float, left_josephson_energy: float, right_josephson_energy: float, left_josephson_capacitance: float, right_josephson_capacitance: float) -> None:
+        self.EJL = left_josephson_energy
+        self.EJR = right_josephson_energy
+        
+        # ---- Create the Island, Stores Net Guage-Invariant Phase Difference Across the Josephson Junction ----
+        self.island = Node(branches=[])
+        
+        # ---- Create branches belonging to the DCSQUID ----
+        self.branches = []
+        
+        # ---- Create capacitors ----
+        for capacitance in [left_josephson_capacitance, right_josephson_capacitance]:
+            if capacitance > 0:
+                capacitor = Capacitor(capacitance=capacitance, nodes=[self.island, self.gnd])
+                
+                # Add capacitor to the DCSQUID
+                self.branches.append(capacitor)
+
+                # Add capacitor to the nodes it connects
+                self.island.branches.append(capacitor)
+                gnd.branches.append(capacitor)
+                
+        # ---- Calculate Effective Josphson Energy as a Function of PHI_ext ----
+        EJ = DCSQUIDCircuit.calculate_effective_EJ(external_flux, self.EJL, self.EJR)
+        
+        # ---- Create a Josephson element that plays the role of both Josephson elements with EJ_eff ----
+        josephson_element = JosephsonElement(josephson_energy=EJ, nodes=[self.island, gnd])
+        
+        # Add Josephson element to the DCSQUID
+        self.branches.append(josephson_element)
+        
+        # Add Josephson element to the branches it connects
+        self.island.branches.append(josephson_element)
+        gnd.branches.append(josephson_element)
+        
+        self.graph = Graph(vertices=[gnd, self.island], edges=self.branches)
+        
+        super().__init__(graph=self.graph)
+        
+    @staticmethod
+    def calculate_effective_EJ(PHI_ext: float, EJL: float, EJR: float):
+        EJ_sum = EJL + EJR
+        d   = (EJR - EJL) / (EJ_sum)
+        
+        return EJ_sum * np.cos(PHI_ext / (2 * REDUCED_FLUX_QUANTUM)) * np.sqrt(1 + (d**2) * (np.tan(PHI_ext / (2 * REDUCED_FLUX_QUANTUM))**2))
+            
+        
+
+
+================ ./circuits/LCResonatorCircuit.py ================
+from core.Circuit import Circuit
+from core.Branch import *
+
+class LCResonatorCircuit(Circuit):
+    def __init__(self, gnd: Node, capacitance: float, inductance: float):
+        self.branches = []
+        self.island   = Node(branches=[])
+        
+        capacitor = Capacitor(
+            capacitance=capacitance,
+            nodes=[gnd, self.island]
+        )
+        
+        self.branches.append(capacitor)
+        self.island.branches.append(capacitor)
+        gnd.branches.append(capacitor)
+        
+        inductor = Inductor(
+            inductance=inductance,
+            nodes=[gnd, self.island]
+        )
+        
+        self.branches.append(inductor)
+        self.island.branches.append(inductor)
+        gnd.branches.append(inductor)
+        
+        self.graph = Graph(vertices=[gnd, self.island], edges=self.branches)
+        
+        super().__init__(graph=self.graph)
+
+
+================ ./circuits/TransmonCircuit.py ================
+from core.Branch import Node, Capacitor, Graph
+from circuits.DCSQUIDCircuit import DCSQUIDCircuit
+
+class TransmonCircuit():
+    def __init__(self, gnd: Node, dcsquid: DCSQUIDCircuit, shunt_capacitance: float, coupling_capacitance: float) -> None:
+        self.island = dcsquid.island
+        self.branches = list(dcsquid.branches)
+        
+        # Add a shunt capacitor
+        shunt_capacitor = Capacitor(capacitance=shunt_capacitance, nodes=[dcsquid.island, gnd])
+        
+        self.branches.append(shunt_capacitor)
+        self.island.branches.append(shunt_capacitor)
+        gnd.branches.append(shunt_capacitor)
+        
+        # Add a coupling capacitor
+        coupling_capacitor = Capacitor(capacitance=coupling_capacitance, nodes=[dcsquid.island, gnd])
+        
+        self.branches.append(coupling_capacitor)
+        self.island.branches.append(coupling_capacitor)
+        gnd.branches.append(coupling_capacitor)
+        
+        self.graph = Graph(vertices=[gnd, dcsquid.island], edges=self.branches)
+        
+        
+
+
+================ ./config.py ================
+LIVE_VISUALIZATION      = True
+OPTIMAL_DETUNING        = -3e6
+OPTIMAL_AMPLITUDE_SCALE = 0.0048
+OPTIMAL_SIGMA           = 1.7e-11
+OPTIMAL_LAMBDA_DRAG     = 0.012
+NUM_PULSES              = 200
+STEPS_PER_PERIOD        = 50
+
+
+
+================ ./core/__init__.py ================
+
+
+
+================ ./core/Branch.py ================
 from __future__ import annotations
 from typing import Optional
 import numpy as np
-from constants import REDUCED_FLUX_QUANTUM
+from core.constants import REDUCED_FLUX_QUANTUM
 
 ######################################## NODE CLASS ########################################
 class Node:
@@ -158,7 +291,7 @@ class Graph:
 ######################################## GRAPH CLASS ########################################
 
 
-================ Circuit.py ================
+================ ./core/Circuit.py ================
 ###############################################################################
 #
 #   Circuit.py
@@ -169,7 +302,7 @@ class Graph:
 ###############################################################################
 
 import numpy as np
-from Branch import *
+from core.Branch import *
 
 ###############################################################################
 #
@@ -301,7 +434,7 @@ class Circuit:
         return self.connectivity()
 
 
-================ constants.py ================
+================ ./core/constants.py ================
 from scipy.constants import h, hbar, e
 
 # Reduced Flux Quantum
@@ -309,25 +442,1020 @@ REDUCED_FLUX_QUANTUM = hbar / (2 * e)   # reduced flux quantum, for dimensionles
 FLUX_QUANTUM         = h / (2 * e)      # physical flux quantum, for SFQ kick angle
 
 
-================ CZ_multi_qubit.py ================
+================ ./core/Quantize.py ================
+###############################################################################
+#
+#   quantization.py
+#
+#   Builds the quantum Hamiltonian in the charge or Fock basis, diagonalizes
+#   it, and transforms operators into the energy eigenbasis.
+#
+###############################################################################
+
+import numpy as np
+from core.constants import *
+from quantum.Transmon import Transmon
+from core.Circuit import Circuit
+from quantum.LCResonator import HarmonicOscillator
+
+
+def quantize(circuit: Circuit, n: int):
+    """
+    Parameters
+    ----------
+    circuit : Circuit
+        A fully constructed Circuit object.
+    n : int
+        Hilbert-space dimension: Cooper-pair numbers run from -n to +n
+        (charge basis), or Fock states 0..n_cut-1 (Fock basis).
+    """
+    EC_matrix = (e**2 / 2) * circuit.inv_capacitance_matrix
+    
+    systems = []
+    
+    if len(circuit.josephson_elements) > 0:
+        for k in range(len(circuit.josephson_elements)):
+            EJ    = circuit.josephson_elements[k].EJ
+            EC    = EC_matrix[k][k]
+            EJ_EC = EJ / EC
+            
+            systems.append(Transmon(
+                EC=EC,
+                EJ_EC=EJ_EC,
+                n=n
+            ))  
+    else:
+        systems.append(HarmonicOscillator(
+            capacitance=circuit.capacitance_matrix[0],
+            inductance=1/circuit.inv_inductance_matrix[0],
+            n_cut=n
+        ))
+        
+    return systems, EC_matrix
+
+
+
+================ ./quantum/__init__.py ================
+
+
+
+================ ./quantum/fidelity.py ================
+import numpy as np
+from quantum.Operator import Operator
+from quantum.utils import get_pauli_coefs
+
+def get_L1(U: np.ndarray, basis):
+        return 1 - np.sum(np.abs(get_pauli_coefs(U, basis=basis))**2)
+
+def get_r(coefs: np.ndarray):
+    return np.linalg.norm(coefs)
+
+def get_delta(r: float):
+    return 1 - r
+
+def get_process_fidelity(U_Q: Operator, U_target: Operator, basis: str):
+    return np.abs( np.trace(U_target[basis].conjugate().T @ U_Q[basis]) )**2 / 4
+
+def get_average_gate_fidelity(process_fidelity: float, L1: float):
+    fidelity = ( (2 * process_fidelity) + 1 - L1 ) / 3
+    return fidelity.real
+
+
+================ ./quantum/LCResonator.py ================
+import numpy as np
+
+from quantum.QuantumOscillator import QuantumOscillator
+from quantum.Operator import Operator
+from core.constants import hbar
+from quantum.utils import *
+        
+class HarmonicOscillator(QuantumOscillator):
+    """
+    A Harmonic Oscillator is a type of System
+    Important notes:
+    1) In a harmonic oscillator, the fock basis and the energy basis are the same
+    2) a_dagger @ a = n = N, the number operator
+    """
+    def __init__(self, capacitance: float, inductance: float, n_cut: int):
+        self.capatiance                      = capacitance
+        self.angular_frequency               = angular_frequency = np.sqrt((1 / inductance) / capacitance) # [rad/s]
+        self.annihilation, self.creation     = QuantumOscillator.create_ladder_operators(n_cut=n_cut)
+        
+        self.n                               = Operator(
+            basis_to_matrix={"fock" : self.creation["fock"] @ self.annihilation["fock"],}
+        )
+        
+        # Hamiltonian opertator in the fock basis
+        self.H0                              = Operator(
+            basis_to_matrix={"fock": hbar*angular_frequency*(self.n["fock"]+(0.5*np.eye(n_cut)))}
+        )
+        
+        self.energies, self.energy_states    = np.linalg.eigh(self.H0["fock"])
+        
+        self.n["energy"]            = self.energy_states.conj().T @ self.n["fock"] @ self.energy_states
+        self.H0["energy"]           = np.diag(self.energies)
+        self.creation["energy"]     = self.energy_states.conj().T @ self.creation["fock"] @ self.energy_states
+        self.annihilation["energy"] = self.energy_states.conj().T @ self.annihilation["fock"] @ self.energy_states
+        
+        self.flux                               = Operator(
+            basis_to_matrix={"fock" : np.sqrt(hbar / (2*capacitance*angular_frequency)) * (self.creation["fock"] + self.annihilation["fock"])}
+        )
+        
+        self.fluxes, self.flux_states = np.linalg.eigh(self.flux["fock"])
+        
+        self.annihilation["flux"] = matrix_change_basis(
+                                        transformation_matrix=self.flux_states, 
+                                        matrix=self.annihilation["fock"]
+                                        )
+        self.creation["flux"]     = matrix_change_basis(
+                                        transformation_matrix=self.flux_states, 
+                                        matrix=self.creation["fock"]
+                                        )
+        
+        self.operators = {
+            "n" : self.n,
+            "H0": self.H0,
+        }
+
+
+================ ./quantum/Matrices.py ================
+import numpy as np
+
+I = np.eye(2)
+
+X = np.array([
+    [0, 1],
+    [1, 0]
+])
+
+Y = np.array([
+    [0, -1j],
+    [1j, 0]
+])
+
+Z = np.array([
+    [1, 0],
+    [0, -1]
+])
+
+CZ = np.array([
+    [1.0, 0.0, 0.0, 0.0],
+    [0.0, 1.0, 0.0, 0.0],
+    [0.0, 0.0, 1.0, 0.0],
+    [0.0, 0.0, 0.0, -1.0]
+])
+
+PAULI_MATRICES = [I, X, Y, Z]
+
+
+================ ./quantum/Operator.py ================
+import numpy as np
+from typing import Optional
+
+from quantum.Matrices import PAULI_MATRICES
+
+class Operator():
+    """
+    An Operator is a matrix in a chosen basis
+    """
+    
+    def __init__(self, basis_to_matrix: dict):
+        self.basis_to_matrix = basis_to_matrix
+    
+    def get_projection(self, basis: str):
+        return self.basis_to_matrix[basis]
+    
+    def __getitem__(self, key):
+        return self.get_projection(basis=key)
+
+    def set_projection(self, basis: str, matrix: np.ndarray):
+        self.basis_to_matrix[basis] = matrix
+        
+    def __setitem__(self, key, value):
+        self.set_projection(basis=key, matrix=value)
+    
+    def __delitem__(self, key):
+        del self.basis_to_matrix[key]
+
+
+================ ./quantum/QuantumOscillator.py ================
+import numpy as np
+
+from quantum.Operator import Operator
+
+class QuantumOscillator():
+    
+    def __init__(self):
+        pass
+    
+    @staticmethod
+    def create_ladder_operators(n_cut: int):
+        fock_annihilation_matrix = np.zeros((n_cut, n_cut))
+        
+        for m in range(n_cut):
+            for n in range(n_cut):
+                if m == (n-1):
+                    fock_annihilation_matrix[m][n] = np.sqrt(n)
+                    
+        annihilation = Operator(
+                        basis_to_matrix={"fock" : fock_annihilation_matrix}
+                        )
+                    
+        creation = Operator(
+                        basis_to_matrix={"fock" : fock_annihilation_matrix.conj().T}
+                        )
+                    
+        return annihilation, creation
+
+
+================ ./quantum/System.py ================
+from __future__ import annotations
+import numpy as np
+from scipy.linalg import expm
+import copy
+
+from quantum.Transmon import Transmon
+from quantum.Operator import Operator
+from quantum.Wavefunction import Wavefunction
+from core.constants import *
+from circuits.DCSQUIDCircuit import DCSQUIDCircuit
+from quantum.QuantumOscillator import QuantumOscillator
+from quantum.LCResonator import HarmonicOscillator
+
+class System():
+    def __init__(self, subsystems: list[QuantumOscillator], dcsquids: list[DCSQUIDCircuit], EC_matrix: np.ndarray, thetas: np.ndarray, clock_multiplier: int, initial_state: Wavefunction, ramp: list[str], PHI_off: np.ndarray, PHI_on: np.ndarray):
+        self.subsystems    = subsystems
+        self.dcsquids      = dcsquids
+        self.EC_matrix     = EC_matrix
+        self.thetas        = thetas
+        self.M             = clock_multiplier
+        self.state         = initial_state  
+        self.ramp          = ramp
+        self.PHI_off       = PHI_off
+        self.PHI_on        = PHI_on
+        
+        self.n_charge      = len(self.subsystems[0].n["energy"])
+        self.n_full        = len(self.state["energy"]) # Dimension of full Hilbert space of the system
+        self.n_trunc       = int(round(self.n_full**(1/len(self.subsystems))))
+        
+        # ---- Derive Qubit and Clock Periods ----
+        self.T_q           = np.array([(2*np.pi) / s.angular_frequency for s in self.subsystems]) # Qubit period [s]
+        # We assume our computational qubits share the same angular frequency s.t. the clock period is well-defined
+        self.T_c           = self.T_q[0] / self.M                                                      # Clock period [s]
+        
+        # ---- Create New Subsystems Specifically For the System (Embedded in Larger Hilbert Space of Dimension n_full)
+        self.sys_subsystems = copy.deepcopy(self.subsystems)
+        
+        for k in range(len(self.subsystems)):
+            sys_subsystem = self.sys_subsystems[k]
+            
+            for op_label in list(sys_subsystem.operators.keys()):
+                
+                sys_subsystem.operators[op_label] = System.upgrade(
+                    operator=System.truncate(sys_subsystem.operators[op_label], self.n_trunc),
+                    n_trunc=self.n_trunc,
+                    idx=k,
+                    num_subsystems=len(self.subsystems)
+                )
+
+        # ---- Derive Kick Operators for Logical Qubits
+        self.transmon_to_kick = {}
+        
+        for k in range(len(self.subsystems)):
+            
+            if isinstance(self.subsystems[k], Transmon):
+                self.transmon_to_kick[k] = Operator(
+                            basis_to_matrix={"energy": expm(-1j * (thetas[k] / self.subsystems[k].r) / 2 * self.subsystems[k].n["energy"])}
+                        )
+            elif isinstance(self.subsystems[k], HarmonicOscillator):
+                self.transmon_to_kick[k] = Operator(
+                            basis_to_matrix={"energy": expm((self.thetas[k] / 2) * (self.subsystems[k].creation["energy"] - self.subsystems[k].annihilation["energy"]))}
+                        )
+            
+            self.transmon_to_kick[k] = System.truncate(
+                operator=self.transmon_to_kick[k],
+                n_trunc=self.n_trunc
+            )
+            
+            self.transmon_to_kick[k] = System.upgrade(
+                operator=self.transmon_to_kick[k],
+                n_trunc=self.n_trunc,
+                idx=k,
+                num_subsystems=len(self.subsystems)
+            )
+        
+        # ---- Derive Coupling Hamiltonain HC ----
+        coupling_sum = 0
+        for k in range(len(self.subsystems)):
+            for l in range(len(self.subsystems)):
+                if k == l:
+                    continue
+                else:   
+                    coupling_sum += (self.EC_matrix[k][l] * self.sys_subsystems[k].operators["n"]["energy"] @ self.sys_subsystems[l].operators["n"]["energy"])
+                
+        self.HC = Operator(
+            basis_to_matrix={"energy" : 4 * coupling_sum}
+        )
+        
+        # ---- Derive the Unperturbed Hamiltonian H0 ----
+        total_H0 = sum(self.sys_subsystems[j].operators["H0"]["energy"] for j in range(len(self.subsystems)))
+        self.H0 = Operator(
+            basis_to_matrix={"energy": total_H0 + self.HC["energy"]}
+        )
+        
+        # ---- For single qubit case ----
+        self.U_1 = Operator(
+            basis_to_matrix={"energy": expm(-1j * self.H0["energy"] * (1 * self.T_c) / hbar)}
+        )
+        
+        self.U_M = Operator(
+            basis_to_matrix={"energy": expm(-1j * self.H0["energy"] * (self.M * self.T_c) / hbar)}
+        )
+                        
+    def set_coupler_flux(self, k: int, EJ_new: float, n: int):
+        # ---- Create a new transmon with an updated josephson energy ----
+        new_transmon = Transmon(
+            EC=self.subsystems[k].EC,
+            EJ_EC=(EJ_new/self.subsystems[k].EC),
+            n=n
+        )
+        
+        # ---- Update sys_subsystems[k]'s operators with new_transmon's operators ----
+        for op_label, operator in new_transmon.operators.items():
+            self.sys_subsystems[k].operators[op_label] = System.upgrade(
+                operator=System.truncate(operator, self.n_trunc),
+                n_trunc=self.n_trunc,
+                idx=k,
+                num_subsystems=len(self.subsystems)
+            )
+            
+        # ---- Rebuild Coupling Hamiltonain HC ----
+        coupling_sum = 0
+        for i in range(len(self.subsystems)):
+            for j in range(len(self.subsystems)):
+                if i == j:
+                    continue
+                else:   
+                    coupling_sum += (self.EC_matrix[i][j] * self.sys_subsystems[i].operators["n"]["energy"] @ self.sys_subsystems[j].operators["n"]["energy"])
+                
+        self.HC = Operator(
+            basis_to_matrix={"energy" : 4 * coupling_sum}
+        )
+        
+        # ---- Rebuild the Unperturbed Hamiltonian H0 ----
+        total_H0 = sum(self.sys_subsystems[j].operators["H0"]["energy"] for j in range(len(self.subsystems)))
+        self.H0 = Operator(
+            basis_to_matrix={"energy": total_H0 + self.HC["energy"]}
+        )
+        
+        # ---- Rebuild free evolution unitaries ----
+        self.U_1 = Operator(
+            basis_to_matrix={"energy": expm(-1j * self.H0["energy"] * (1 * self.T_c) / hbar)}
+        )
+        
+        self.U_M = Operator(
+            basis_to_matrix={"energy": expm(-1j * self.H0["energy"] * (self.M * self.T_c) / hbar)}
+        )            
+        
+        
+    def free_evolve(self, clock_cycles: int):
+        self.state.apply(
+            operator=Operator(
+                {"energy": expm(-1j * self.H0["energy"] * (clock_cycles * self.T_c) / hbar)}
+                )
+            )
+
+    def RY(self, k: int, theta_target: float):
+        
+        self.on_ramp_evolve(k)
+        
+        N_kicks = int(np.round(theta_target/self.thetas[k]))
+        # N_kicks = 47
+                
+        for _ in range(N_kicks):
+            self.state.apply(self.transmon_to_kick[k])
+            
+            self.state.apply(self.U_M)
+        
+        self.off_ramp_evolve(k)
+        
+    def RX(self, k: int, theta_target: float):
+        
+        # RZ(pi/2)
+        for _ in range(int((1 * self.M) / 4)):
+            self.state.apply(self.U_1)
+        
+        # RY(theta_target)
+        self.RY(k, theta_target)
+        
+        # RZ(-pi/2) = RZ(3pi/2)
+        for _ in range(int((3 * self.M) / 4)):
+            self.state.apply(self.U_1)
+            
+    def fSim(self, duration):
+        self.set_coupler_flux(
+            k=1, 
+            EJ_new=DCSQUIDCircuit.calculate_effective_EJ(
+                PHI_ext=self.PHI_on[1], 
+                JL=self.dcsquids[1].J_L, 
+                JR=self.dcsquids[1].J_R
+                ),
+            n=self.n_charge
+            )
+        
+        for _ in range(int(round(duration / self.T_c))):
+            self.state.apply(self.U_1)
+            
+        self.set_coupler_flux(
+            k=1, 
+            EJ_new=DCSQUIDCircuit.calculate_effective_EJ(
+                PHI_ext=self.PHI_off[1], 
+                JL=self.dcsquids[1].J_L, 
+                JR=self.dcsquids[1].J_R
+                ),
+            n=self.n_charge
+            )
+    
+    def CZ(self):
+        # Correspond to hold duration of 17 ns
+        theta = 0.7732102591991971
+        phi = -3.1294047493918216
+        
+        alpha = np.arcsin(np.sqrt(((1/2) - np.sin(phi/2)**2) / (np.sin(theta)**2 - np.sin(phi/2)**2)))
+        eta   = np.arctan((np.tan(alpha)*np.sin(theta)) / (np.sin(phi/2))) + ((np.pi/2) * (1 - np.sign(np.sin(phi/2))))
+        eps   = np.arctan((np.tan(alpha)*np.cos(theta)) / (np.cos(phi/2))) + ((np.pi/2) * (1 - np.sign(np.cos(phi/2))))
+        
+        self.RX(k=0, theta_target=eps)
+        self.RX(k=2, theta_target=eta)
+        
+        self.fSim(duration=17e-9)
+        
+        self.RX(k=0, theta_target=2*alpha)
+        
+        
+            
+    def on_ramp_evolve(self, k: int):
+    
+        for sequence in self.ramp:
+            for action in sequence:
+                if action == "0":
+                    # free evolve for a single clock cycle
+                    self.state.apply(self.U_1)
+                else:
+                    # kick
+                    self.state.apply(self.transmon_to_kick[k])
+
+                    # free evolve for a single clock cycle
+                    self.state.apply(self.U_1)
+
+    def off_ramp_evolve(self, k: int):
+        flipped_ramps = [self.flip_X_ramp(r) for r in self.ramp][::-1]
+        
+        for sequence in flipped_ramps:
+            for action in sequence:
+                if action == "0":
+                    # free evolve for a single clock cycle
+                    self.state.apply(self.U_1)
+                else:
+                    # kick
+                    self.state.apply(self.transmon_to_kick[k])
+
+                    # free evolve for a single clock cycle
+                    self.state.apply(self.U_1)
+
+    @staticmethod
+    def flip_X_ramp(ramp: str):
+        n = len(ramp)
+        flipped = ['0'] * n
+        for i in range(n):
+            if ramp[i] == '1':
+                new_pos = (n - i) % n
+                flipped[new_pos] = '1'
+        return ''.join(flipped)
+    
+    
+    
+    @staticmethod
+    def truncate(operator: Operator, n_trunc: int):
+        truncated_basis_to_matrix = {}
+        
+        for basis, matrix in operator.basis_to_matrix.items():
+            truncated_basis_to_matrix[basis] = matrix[:n_trunc, :n_trunc]
+        
+        return Operator(truncated_basis_to_matrix)
+    
+    @staticmethod
+    def upgrade(operator: Operator, n_trunc: int, idx: int, num_subsystems: int):
+        upgraded_basis_to_matrix = {}
+        
+        for basis, matrix in operator.basis_to_matrix.items():
+            upgraded_matrix = 1.0
+            
+            for k in range(num_subsystems): 
+                if k == idx:
+                    upgraded_matrix = np.kron(upgraded_matrix, matrix)
+                else:
+                    upgraded_matrix = np.kron(upgraded_matrix, np.eye(n_trunc))
+                    
+            upgraded_basis_to_matrix[basis] = upgraded_matrix
+                
+        return Operator(upgraded_basis_to_matrix)        
+
+
+================ ./quantum/Transmon.py ================
+import numpy as np
+
+from quantum.QuantumOscillator import QuantumOscillator
+from quantum.Operator import Operator
+from core.constants import *
+from quantum.utils import *
+        
+class Transmon(QuantumOscillator):
+    """
+    A Transmon system
+    """
+    def __init__(self, EC: float, EJ_EC: float, n: int):
+        self.EC = EC                       # Charging energy
+        self.EJ = EJ_EC * self.EC          # Josephson energy
+        self.r  = (1/2)*(EJ_EC / 2)**(1/4) # charge zero-point-fluctuation
+        
+        # Charge operator
+        self.n = Operator(
+            basis_to_matrix={"charge" : np.diag([n for n in range(int(-(n-1)/2), int((n-1)/2) + 1)])}
+        )   
+        
+        # Kinetic energy operator
+        self.T = Operator(
+            basis_to_matrix={"charge" : 4*EC*(self.n["charge"]**2)}
+        ) 
+        
+        # Potential energy operator
+        self.V = Operator(
+            basis_to_matrix={"charge" : create_upper_lower(value=-self.EJ / 2, dim=n)}
+        ) 
+        
+        # Unperturbed Hamiltonian operator
+        self.H0 = Operator(
+            basis_to_matrix={"charge" : self.T["charge"] + self.V["charge"]}
+            ) 
+    
+        # Diagonalize the Hamiltonian in the charge basis to get energy eigenvalues/eigenvectors
+        self.energies, self.energy_states = np.linalg.eigh(self.H0["charge"])
+        self.energy_states           = self.energy_states.astype(complex)
+    
+        # Unperturbed Hamiltonian operator in the energy basis
+        self.H0["energy"] = np.diag(self.energies)
+
+        self.anharmonicity           = (self.energies[2] - self.energies[1]) - (self.energies[1] - self.energies[0])
+        self.frequency               = (self.energies[1] - self.energies[0]) / h
+        self.angular_frequency       = self.frequency * (2*np.pi)
+    
+        # NOTE: I need to understand this better, Claude gave me this fix and I don't know why it works
+        # Fix eigenvector phases so that <psi_i|n|psi_{i+1}> is negative imaginary
+        for i in range(len(self.energies) - 1):
+            element = self.energy_states[:, i].conj() @ self.n["charge"] @ self.energy_states[:, i + 1]
+            if np.abs(element) > 1e-12:
+                phase = -1j * element / np.abs(element)
+                self.energy_states[:, i + 1] = phase * self.energy_states[:, i + 1]
+            
+        # Get n in the energy basis
+        self.n["energy"] = self.energy_states.conj().T @ self.n["charge"] @ self.energy_states
+        
+        self.annihilation, self.creation     = QuantumOscillator.create_ladder_operators(n_cut=n)
+                
+        C = e**2 / (2 * self.EC)
+        self.flux                               = Operator(
+            basis_to_matrix={"fock" : np.sqrt(hbar / (2*C*self.angular_frequency)) * (self.creation["fock"] + self.annihilation["fock"])}
+        )
+        
+        self.fluxes, self.flux_states = np.linalg.eigh(self.flux["fock"])
+        
+        self.annihilation["energy"] = self.annihilation["fock"]
+        self.creation["energy"]     = self.annihilation["fock"]
+        
+        self.annihilation["flux"] = matrix_change_basis(
+                                        transformation_matrix=self.flux_states, 
+                                        matrix=self.annihilation["fock"]
+                                        )
+        self.creation["flux"]     = matrix_change_basis(
+                                        transformation_matrix=self.flux_states, 
+                                        matrix=self.creation["fock"]
+                                        )
+        
+        self.operators = {
+            "n" : self.n,
+            "T" : self.T,
+            "V" : self.V,
+            "H0": self.H0,
+        }
+                       
+
+    
+    
+    
+
+
+================ ./quantum/utils.py ================
+import numpy as np
+
+from quantum.Matrices import PAULI_MATRICES
+from quantum.Operator import Operator
+
+def get_spherical_coords(alpha, beta):
+    norm = np.sqrt(np.abs(alpha)**2 + np.abs(beta)**2)
+    alpha = alpha / norm
+    beta = beta / norm
+    
+    phi = np.arctan2(alpha.imag, alpha.real)
+    tau = np.arctan2(beta.imag, beta.real)
+    
+    azimuth = phi - tau
+    
+    inclination = 2 * np.arccos(np.clip(np.abs(alpha), -1, 1))
+    
+    return azimuth, inclination
+    
+    
+def get_rectangular_coords(azimuth, inclination):
+    x = np.sin(inclination) * np.cos(azimuth)
+    y = np.sin(inclination) * np.sin(azimuth)
+    z = np.cos(inclination)
+    
+    return x, y, z
+
+def create_upper_lower(value: float, dim: int):
+    matrix = np.zeros((dim, dim))
+    
+    for i in range(dim):
+        for j in range(dim):
+            if (i + 1) == j:
+                matrix[i][j] = value
+            elif (i - 1) == j:
+                matrix[i][j] = value
+                
+    return matrix
+
+def extract_relative_phase(U: np.ndarray):
+    if len(U) != 2:
+        print(f"Only works for 2x2 unitaries")
+        return
+    
+    alpha = U[0][0]
+    beta = U[1][1]
+    
+    phi = np.angle(beta) - np.angle(alpha)
+    
+    return phi
+
+def vector_change_basis(transformation_matrix: np.ndarray, vector: np.ndarray):
+    return transformation_matrix.conj().T @ vector
+
+def matrix_change_basis(transformation_matrix: np.ndarray, matrix: np.ndarray):
+    return transformation_matrix.conj().T @ matrix @ transformation_matrix
+
+def fock_to_phase(self, fock_coefs, phases: np.ndarray):
+    N = len(fock_coefs)
+    K = len(phases)
+    
+    linear_map = np.zeros((K, N), dtype=complex)
+    
+    for k in range(K):
+        phase = phases[k]
+        for n in range(N):
+            linear_map[k][n] = np.exp(-1j * n * phase) / np.sqrt(2*np.pi)
+            
+    return vector_change_basis(transformation_matrix=linear_map, vector=fock_coefs)
+    
+def to_ket(coefs: np.ndarray):
+    return coefs.reshape(-1, 1)
+
+def to_bra(coefs: np.array):
+    return np.array([c.conj() for c in coefs])
+
+def get_pauli_coefs(U: np.ndarray, basis: str):
+        if U[basis].shape != (2, 2):
+            raise Exception("Matrix is Not (2 x 2)")
+
+        coefs = np.zeros(len(PAULI_MATRICES), dtype=complex)
+    
+        for idx, matrix in enumerate(PAULI_MATRICES):
+            coefs[idx] = np.trace(matrix @ U[basis]) / 2
+            
+        return coefs
+
+def get_RY_target(theta_target: float):
+    RY_TARGET = Operator(
+        basis_to_matrix={"energy": np.array([
+                [np.cos(theta_target / 2), -np.sin(theta_target / 2)],
+                [np.sin(theta_target / 2), np.cos(theta_target / 2)]
+            ])}
+    )
+    return RY_TARGET
+
+def get_RX_target(theta_target: float):
+    RX_TARGET = Operator(
+        basis_to_matrix={"energy": np.array([
+                [np.cos(theta_target / 2), -1j * np.sin(theta_target / 2)],
+                [-1j * np.sin(theta_target / 2), np.cos(theta_target / 2)]
+            ])}
+    )
+    return RX_TARGET
+
+def get_fSim_target(theta: float, phi: float):
+    a = np.cos(theta)
+    b = -1j * np.sin(theta)
+    c = np.exp(-1j * phi)
+    
+    fSim_TARGET = Operator(
+        basis_to_matrix={"energy" : np.array([
+                [1.0, 0.0, 0.0, 0.0],
+                [0.0, a, b, 0.0],
+                [0.0, b, a, 0.0],
+                [0.0, 0.0, 0.0, c]
+            ])}
+    )
+    return fSim_TARGET
+
+
+
+
+================ ./quantum/Wavefunction.py ================
+from __future__ import annotations
+from typing import Optional
+import numpy as np
+
+from quantum.Operator import Operator
+class Wavefunction():
+    """
+    A wavefunction is a vector in a complex vector space,
+    along with a specified basis
+    """
+    
+    def __init__(self, basis_to_coefs: dict):
+        self.basis_to_coefs = basis_to_coefs
+        
+        self.U = Operator({})
+        
+        for basis, coefs in basis_to_coefs.items():
+            self.U[basis] = np.eye(len(coefs))
+        
+    def get_projection(self, basis: str):
+        return self.basis_to_coefs[basis]
+    
+    def __getitem__(self, key):
+        return self.get_projection(basis=key)
+    
+    def set_projection(self, basis: str, coefs: np.ndarray):
+        self.basis_to_coefs[basis] = coefs
+        
+        
+    def __setitem__(self, key, value):
+        self.set_projection(basis=key, coefs=value)
+        
+    def get_probabilities(self, basis: str):
+        return np.abs(self.basis_to_coefs[basis])**2
+            
+    def apply(self, operator: Operator):        
+        # Apply the operator to each basis representation of the wavefunction
+        for basis, coefs in self.basis_to_coefs.items():
+            self.basis_to_coefs[basis] = (operator[basis] @ coefs).flatten()
+            self.U[basis] = operator[basis] @ self.U[basis]
+        
+    def get_accumulated_unitary(self):
+        return self.U
+
+    def reset_accumulated_unitary(self):
+        for basis, coefs in self.U.basis_to_matrix.items():
+            self.U[basis] = np.eye(len(coefs))
+    
+    def __delitem__(self, key):
+        del self.basis_to_coefs[key]
+        
+
+
+================ ./simulations/__init__.py ================
+
+
+
+================ ./simulations/crank_nicolson.py ================
+import sys
+import os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 import numpy as np
 from scipy.linalg import expm
 from scipy.linalg import ishermitian
 import matplotlib.pyplot as plt
 
-from System import System
-from Branch import *
-from Operator import Operator
-from Wavefunction import Wavefunction
-from Matrices import X, Y, Z
-from utils import *
-from constants import *
-from fidelity import *
-from Circuit import Circuit
-from Quantize import quantize
-from DCSQUID import DCSQUID
-from TransmonCircuit import TransmonCircuit
-from Matrices import CZ
+from quantum.System import System
+from quantum.Operator import Operator
+from quantum.Wavefunction import Wavefunction
+from quantum.utils import *
+from core.constants import *
+from quantum.fidelity import *
+from core.Circuit import Circuit
+from core.Quantize import quantize
+from core.Branch import *
+from circuits.DCSQUIDCircuit import DCSQUIDCircuit
+from circuits.TransmonCircuit import TransmonCircuit
+from quantum.Matrices import X, Y, Z
+from config import *
+
+
+
+PLOT = True
+
+def main():
+    # ---- Shared Hyper-parameters ----
+    n                  = 201            # Number of charge states, -n/2 : n/2 for each transmon
+    n_trunc            = 7              # number of states to truncate to for each transmon
+    THETAS             = np.array([0.03])
+    clock_multiplier   = 8
+    ramp               = []
+    
+    # ---- Transmon Circuit Hyper-parameters ----
+    EJ_EC = 69
+    EC    = h * 250 * 1e6   # Charging energy [J]
+    
+    # ---- Derived Physical Constants ----
+    EJ    = EJ_EC * EC
+    n_zpf = (1/2) * (EJ_EC / 2)**(1/4) # approximation
+    BETAS = THETAS / (2 * n_zpf)        # approximation
+    C     = e**2 / (2 * EC)            # includes Josephson Capacitance CJ
+    C_C   = (BETAS[0] * hbar * C) / FLUX_QUANTUM
+    C_S   = C - C_C
+    
+    # ---- Create Ground Node ----
+    gnd = Node(branches=[])
+    
+    # ---- Create Nodes and Branches of Each DCSQUID Circuit (C_JL, C_JR are embedded in C_S) ----
+    q1_dcsquid = DCSQUIDCircuit(
+        gnd=gnd,
+        external_flux=0,
+        left_josephson_energy=EJ,
+        right_josephson_energy=EJ,
+        left_josephson_capacitance=0,
+        right_josephson_capacitance=0,
+    )
+    
+    # ---- Create Transmon Circuit by Adding a Shunt Capacitor Branch ----
+    q1 = TransmonCircuit(
+        gnd=gnd,
+        dcsquid=q1_dcsquid,
+        shunt_capacitance=C_S,
+        coupling_capacitance=C_C
+    )
+
+    # ---- Create the Larger Circuit Graph Object (G = (V, E)) ----
+    circuit_graph = Graph(vertices=[gnd, q1.island], edges=q1.branches)
+    
+    # ---- Create Circuit Object From Graph ----
+    circuit = Circuit(circuit_graph)
+    
+    # ---- Build Matrices ----
+    circuit.build()
+    
+    subsystems, EC_matrix = quantize(circuit=circuit, n=n)
+    
+    transmon = subsystems[0]
+        
+    n_full = n_trunc ** len(subsystems)
+    
+    print(f"Full Hilbert space dimension: {n_full}")
+    
+    # ---- Create individual Subsystem Quantum Basis States ----
+    z = Wavefunction(basis_to_coefs={"energy" : np.array([1] + (n_trunc - 1) * [0])})
+    o = Wavefunction(basis_to_coefs={"energy" : np.array([0] + [1] + (n_trunc - 2) * [0])})
+
+    # ---- Creating Our Initial Quantum State in energy basis, |0> ----
+    state = Wavefunction(basis_to_coefs={"energy" : z["energy"].copy()})
+    
+    # ---- Transmon Anharmonicity ----
+    alpha = transmon.anharmonicity / hbar
+    
+    # ---- Qubit Frequency ----
+    f_q     = transmon.frequency
+    
+    # ---- Drive Frequency ----
+    f_d     = f_q + OPTIMAL_DETUNING
+    
+    # ---- Drive period ----
+    T_drive = 1 / f_d
+
+    # ---- Total Simulation Time ----
+    T       = NUM_PULSES * T_drive
+    
+    # ---- Delta t ----
+    dt      =  T_drive / STEPS_PER_PERIOD
+    
+    # ---- Total Number of Steps ----
+    N_t     = round (T / dt)
+    
+    # ---- Time Vector ----
+    t_vec   = np.arange(N_t) * dt
+    
+    # Result arrays
+    At_vec = np.zeros(N_t)
+    P_0    = np.zeros(N_t)
+    P_1    = np.zeros(N_t)
+    P_2    = np.zeros(N_t)
+    
+    # ---- Pulse Amplitude ----
+    A_0 = OPTIMAL_AMPLITUDE_SCALE * (transmon.energies[1] - transmon.energies[0])
+    
+    # ---- Pulse Centers ----
+    pulse_centers = np.arange(NUM_PULSES) * T_drive
+    
+    # DRAG correction operator (σ_y-like in 1-2 subspace)
+    n_12_y = np.zeros((n, n), dtype=complex)
+    n_12_y[1, 2] = -1j * transmon.n["energy"][1, 2]
+    n_12_y[2, 1] =  1j * transmon.n["energy"][2, 1]
+    
+    # ---- Crank-Nicolson Loop ----
+    for i, t in enumerate(t_vec):
+        t_mid = t + (dt / 2)
+        
+        dt_to_pulses = t_mid - pulse_centers
+        mask = np.abs(dt_to_pulses) < 4 * OPTIMAL_SIGMA
+
+        gauss    = np.exp(-0.5 * (dt_to_pulses[mask] / OPTIMAL_SIGMA)**2)
+        At       = A_0 * np.sum(gauss) * (1/ (2 *n_zpf))
+        
+        At_dot   = A_0 * np.sum(-dt_to_pulses[mask] / OPTIMAL_SIGMA**2 * gauss)
+        drag_coeff = 0.0 if np.isclose(alpha, 0.0) else OPTIMAL_LAMBDA_DRAG * At_dot / alpha
+        
+        At_vec[i] = At
+        
+        H_mid = Operator(
+            basis_to_matrix={"energy" : transmon.H0["energy"] + At * transmon.n["energy"] + (drag_coeff * n_12_y)}
+        )
+        
+        A_mat           = np.eye(n_trunc) + (1j * dt / (2 * hbar)) * H_mid["energy"][:n_trunc, :n_trunc]
+        B_mat           = np.eye(n_trunc) - (1j * dt / (2 * hbar)) * H_mid["energy"][:n_trunc, :n_trunc]
+        state["energy"] = np.linalg.solve(A_mat, B_mat @ state["energy"])
+
+        P_0[i] = state.get_probabilities("energy")[0]
+        P_1[i] = state.get_probabilities("energy")[1]
+        P_2[i] = state.get_probabilities("energy")[2]
+    
+    # ---- Plotting ----
+    if PLOT:
+        t_ns = t_vec * 1e9
+
+        fig, (ax1, ax2) = plt.subplots(2, 1, sharex=True, figsize=(12, 8))
+
+        ax1.plot(t_ns, At_vec / (h * 1e9), color="tab:blue", linewidth=2)
+        ax1.set_ylabel("Drive Amplitude (GHz)", fontsize=14)
+        ax1.set_title("Crank-Nicolson Microwave Drive Simulation", fontsize=16)
+        ax1.tick_params(labelsize=12)
+
+        ax2.plot(t_ns, P_0, label="|0⟩", linewidth=2)
+        ax2.plot(t_ns, P_1, label="|1⟩", linewidth=2)
+        ax2.plot(t_ns, P_2, label="|2⟩", linestyle="--", linewidth=2)
+        ax2.set_xlabel("Time (ns)", fontsize=14)
+        ax2.set_ylabel("Population", fontsize=14)
+        ax2.legend(fontsize=13)
+        ax2.set_ylim(-0.05, 1.05)
+        ax2.tick_params(labelsize=12)
+
+        plt.tight_layout()
+        plt.savefig("microwave_drive.png", dpi=150)
+        plt.show()
+    
+    
+    
+    
+
+        
+
+        
+    
+if __name__=="__main__":
+    main()
+
+
+================ ./simulations/CZ_multi_qubit.py ================
+import sys
+import os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+import numpy as np
+from scipy.linalg import expm
+from scipy.linalg import ishermitian
+import matplotlib.pyplot as plt
+
+from quantum.System import System
+from core.Branch import *
+from quantum.Operator import Operator
+from quantum.Wavefunction import Wavefunction
+from quantum.Matrices import X, Y, Z, CZ
+from quantum.utils import *
+from core.constants import *
+from quantum.fidelity import *
+from core.Circuit import Circuit
+from core.Quantize import quantize
+from circuits.DCSQUIDCircuit import DCSQUIDCircuit
+from circuits.TransmonCircuit import TransmonCircuit
 
 PLOT = True
 
@@ -675,158 +1803,158 @@ if __name__=="__main__":
     main()
 
 
-================ DCSQUID.py ================
+================ ./simulations/harmonic_levels.py ================
+import sys
+import os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import copy
 
-from Branch import *
-from Circuit import Circuit
-class DCSQUIDCircuit(Circuit):
-    _id = 0
-    def __init__(self, gnd: Node, external_flux: float, left_josephson_current: float, right_josephson_current: float, left_josephson_capacitance: float, right_josephson_capacitance: float) -> None:
-        self.J_L = left_josephson_current
-        self.J_R = right_josephson_current
-        
-        # ---- Create the Island, Stores Net Guage-Invariant Phase Difference Across the Josephson Junction ----
-        self.island = Node(label=str(f"q_{DCSQUID._id}"), branches=[])
-        DCSQUID._id += 1
-        
-        # ---- Create branches belonging to the DCSQUID ----
-        self.branches = []
-        
-        # ---- Create capacitors ----
-        for capacitance in [left_josephson_capacitance, right_josephson_capacitance]:
-            if capacitance > 0:
-                capacitor = Capacitor(capacitance=capacitance, nodes=[self.island, self.gnd])
-                
-                # Add capacitor to the DCSQUID
-                self.branches.append(capacitor)
-
-                # Add capacitor to the nodes it connects
-                self.island.branches.append(capacitor)
-                gnd.branches.append(capacitor)
-                
-        # ---- Calculate Effective Josphson Energy as a Function of PHI_ext ----
-        EJ = DCSQUID.calculate_effective_EJ(external_flux, left_josephson_current, right_josephson_current)
-        
-        # ---- Create a Josephson element that plays the role of both Josephson elements with EJ_eff ----
-        josephson_element = JosephsonElement(josephson_energy=EJ, nodes=[self.island, gnd])
-        
-        # Add Josephson element to the DCSQUID
-        self.branches.append(josephson_element)
-        
-        # Add Josephson element to the branches it connects
-        self.island.branches.append(josephson_element)
-        gnd.branches.append(josephson_element)
-        
-        self.graph = Graph(vertices=[gnd, self.island], edges=self.branches)
-        
-        super().__init__(graph=self.graph)
-        
-    @staticmethod
-    def calculate_effective_EJ(PHI_ext: float, JL: float, JR: float):
-        EJL = REDUCED_FLUX_QUANTUM * JL
-        EJR = REDUCED_FLUX_QUANTUM * JR
-        
-        d   = (JR - JL) / (JR + JL)
-        
-        return (EJL + EJR) * np.cos(PHI_ext / (2 * REDUCED_FLUX_QUANTUM)) * np.sqrt(1 + (d**2) * (np.tan(PHI_ext / (2 * REDUCED_FLUX_QUANTUM))**2))
-            
-        
-
-
-================ fidelity.py ================
-import numpy as np
-from Operator import Operator
-from utils import get_pauli_coefs
-
-def get_L1(U: np.ndarray, basis):
-        return 1 - np.sum(np.abs(get_pauli_coefs(U, basis=basis))**2)
-
-def get_r(coefs: np.ndarray):
-    return np.linalg.norm(coefs)
-
-def get_delta(r: float):
-    return 1 - r
-
-def get_process_fidelity(U_Q: Operator, U_target: Operator, basis: str):
-    return np.abs( np.trace(U_target[basis].conjugate().T @ U_Q[basis]) )**2 / 4
-
-def get_average_gate_fidelity(process_fidelity: float, L1: float):
-    fidelity = ( (2 * process_fidelity) + 1 - L1 ) / 3
-    return fidelity.real
-
-
-================ HarmonicOscillator.py ================
-import numpy as np
-
-from QuantumOscillator import QuantumOscillator
-from Operator import Operator
-from constants import hbar   
-from utils import *
-        
-class HarmonicOscillator(QuantumOscillator):
-    """
-    A Harmonic Oscillator is a type of System
-    Important notes:
-    1) In a harmonic oscillator, the fock basis and the energy basis are the same
-    2) a_dagger @ a = n = N, the number operator
-    """
-    def __init__(self, capacitance: float, inductance: float, n_cut: int):
-        self.capatiance                      = capacitance
-        self.angular_frequency               = angular_frequency = np.sqrt((1 / inductance) / capacitance) # [rad/s]
-        self.annihilation, self.creation     = QuantumOscillator.create_ladder_operators(n_cut=n_cut)
-        
-        self.n                               = Operator(
-            basis_to_matrix={"fock" : self.creation["fock"] @ self.annihilation["fock"],}
-        )
-        
-        # Hamiltonian opertator in the fock basis
-        self.H0                              = Operator(
-            basis_to_matrix={"fock": hbar*angular_frequency*(self.n["fock"]+(0.5*np.eye(n_cut)))}
-        )
-        
-        self.energies, self.energy_states    = np.linalg.eigh(self.H0["fock"])
-        
-        self.n["energy"]  = self.energy_states.conj().T @ self.n["fock"] @ self.energy_states
-        self.H0["energy"] = np.diag(self.energies)
-        
-        self.x                               = Operator(
-            basis_to_matrix={"fock" : np.sqrt(hbar / (2*capacitance*angular_frequency)) * (self.creation["fock"] + self.annihilation["fock"])}
-        )
-        
-        self.positions, self.position_states = np.linalg.eigh(self.x["fock"])
-        
-        self.annihilation["position"] = matrix_change_basis(
-                                        transformation_matrix=self.position_states, 
-                                        matrix=self.annihilation["fock"]
-                                        )
-        self.creation["position"]     = matrix_change_basis(
-                                        transformation_matrix=self.position_states, 
-                                        matrix=self.creation["fock"]
-                                        )
-        
-        self.operators = {
-            "n" : self.n,
-            "H0": self.H0,
-        }
-
-
-================ LC_resonator.py ================
 import numpy as np
 from scipy.linalg import expm
 from scipy.linalg import ishermitian
 import matplotlib.pyplot as plt
 
-from System import System
-from Operator import Operator
-from Wavefunction import Wavefunction
-from utils import *
-from constants import *
-from fidelity import *
-from Circuit import Circuit
-from Quantize import quantize
-from Branch import *
-from LCResonatorCircuit import LCResonatorCircuit
-from Matrices import X, Y, Z
+from quantum.System import System
+from quantum.Operator import Operator
+from quantum.Wavefunction import Wavefunction
+from quantum.utils import *
+from core.constants import *
+from quantum.fidelity import *
+from core.Circuit import Circuit
+from core.Quantize import quantize
+from core.Branch import *
+from circuits.LCResonatorCircuit import LCResonatorCircuit
+from quantum.Matrices import X, Y, Z
+
+
+def main():
+    # ---- Shared Hyper-parameters ----
+    n                  = 7            # Number of charge states, -n/2 : n/2
+    n_trunc            = 7              # number of states to truncate to 
+    THETAS             = [0.03]         # U_kick angle
+    clock_multiplier   = 8
+    ramp               = []
+    
+    # ---- Hyper-parameters for Naive Harmonic Oscillator Qubit ----
+    C          = 100e-15 # [F]
+    L          = 10e-9   # [H]
+
+    # ---- Create Ground Node ----
+    gnd = Node(branches=[])
+    
+    lc_resonator = LCResonatorCircuit(
+        gnd=gnd,
+        capacitance=C,
+        inductance=L
+    )
+
+    # ---- Create the Larger Circuit Graph Object (G = (V, E)) ----
+    circuit_graph = lc_resonator.graph
+    
+    # ---- Create Circuit Object From Graph ----
+    circuit = Circuit(circuit_graph)    
+    
+    # ---- Build Matrices ----
+    circuit.build()
+    
+    subsystems, EC_matrix = quantize(circuit=circuit, n=n)
+    
+    harmonic_oscillator = subsystems[0]
+    
+    n_full = n_trunc ** len(subsystems)
+    
+    # ---- Create individual Subsystem Quantum Basis States ----
+    z = Wavefunction(basis_to_coefs={"energy" : np.array([1] + (n_full - 1) * [0])})
+
+    # ---- Creating Our Initial Quantum State in Energy/Fock Basis, |0> ----
+    initial_state = Wavefunction(basis_to_coefs={"energy" : z["energy"].copy()})
+    
+    # ---- Add its its projection onto the flux basis
+    initial_state["flux"] = vector_change_basis(
+            harmonic_oscillator.flux_states,
+            initial_state["energy"],
+        )
+    
+    initial_state.U["flux"] = matrix_change_basis(
+        harmonic_oscillator.flux_states,
+        initial_state.U["energy"]
+    )
+    
+    # ---- Creating The Full System ----
+    system = System(
+        subsystems=subsystems,
+        dcsquids=[],
+        EC_matrix=EC_matrix,
+        thetas=THETAS,
+        clock_multiplier=clock_multiplier,
+        initial_state=initial_state,
+        ramp=ramp,
+        PHI_off=[], 
+        PHI_on=[]
+    )
+
+    wavefuntions = []
+    
+    # ---- Want Every Fock State Projected in the Position Basis ----
+    # 1) Store the position representation
+    # 2) Apply creation operator to get next eigenstate of fock basis
+    
+    for n in range(n_full):
+        
+        wavefuntions.append(copy.deepcopy(system.state))
+
+        if n < n_full - 1:
+            system.state.apply(operator=harmonic_oscillator.creation)        
+        
+    # ---- Plot wavefunctions at their energy levels ----
+    fig, ax = plt.subplots(figsize=(10, 8))
+
+    # Plot potential energy
+    V = 0.5 * C * harmonic_oscillator.angular_frequency**2 * harmonic_oscillator.fluxes**2
+    ax.plot(harmonic_oscillator.fluxes / REDUCED_FLUX_QUANTUM, V, color='black', linewidth=2, label="V(x)")
+
+    for n in range(n_full):
+        energy = (hbar * harmonic_oscillator.angular_frequency) * (n + 0.5)
+        probs = wavefuntions[n].get_probabilities(basis="flux")
+        scaled = probs / np.max(probs) * (hbar * harmonic_oscillator.angular_frequency) * 0.35
+        ax.fill_between(harmonic_oscillator.fluxes / REDUCED_FLUX_QUANTUM, energy, energy + scaled, alpha=0.3)
+        ax.plot(harmonic_oscillator.fluxes / REDUCED_FLUX_QUANTUM, energy + scaled, linewidth=1.5, label=f"|{n}⟩")
+
+    ax.set_xlabel("Flux", fontsize=14)
+    ax.set_ylabel("Energy", fontsize=14)
+    ax.set_title("Harmonic Oscillator Eigenstates in Position Basis", fontsize=16)
+    ax.set_xlim(harmonic_oscillator.fluxes[0] / REDUCED_FLUX_QUANTUM, harmonic_oscillator.fluxes[-1] / REDUCED_FLUX_QUANTUM)
+    ax.set_ylim(0, harmonic_oscillator.energies[-1])
+
+    plt.tight_layout()
+    plt.show()
+        
+    
+if __name__=="__main__":
+    main()
+
+
+================ ./simulations/lc_resonator.py ================
+import sys
+import os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+import numpy as np
+from scipy.linalg import expm
+from scipy.linalg import ishermitian
+import matplotlib.pyplot as plt
+
+from quantum.System import System
+from quantum.Operator import Operator
+from quantum.Wavefunction import Wavefunction
+from quantum.utils import *
+from core.constants import *
+from quantum.fidelity import *
+from core.Circuit import Circuit
+from core.Quantize import quantize
+from core.Branch import *
+from circuits.LCResonatorCircuit import LCResonatorCircuit
+from quantum.Matrices import X, Y, Z
 
 
 
@@ -834,8 +1962,8 @@ PLOT = True
 
 def main():
     # ---- Shared Hyper-parameters ----
-    n                  = 201            # Number of charge states, -n/2 : n/2
-    n_trunc            = 7              # number of states to truncate to 
+    n                  = 15            # Number of charge states, -n/2 : n/2
+    n_trunc            = 15              # number of states to truncate to 
     THETAS             = [0.03]         # U_kick angle
     clock_multiplier   = 8
     ramp               = []
@@ -860,8 +1988,6 @@ def main():
     circuit = Circuit(circuit_graph)
     
     # ---- Build Matrices ----
-    for v in circuit_graph.vertices:
-        print(v.id)
     circuit.build()
     
     subsystems, EC_matrix = quantize(circuit=circuit, n=n)
@@ -876,6 +2002,19 @@ def main():
 
     # ---- Creating Our Initial Quantum State in Energy/Fock Basis, |0> ----
     initial_state = Wavefunction(basis_to_coefs={"energy" : z["energy"].copy()})
+    
+    # ---- Creating The Full System ----
+    system = System(
+        subsystems=subsystems,
+        dcsquids=[],
+        EC_matrix=EC_matrix,
+        thetas=THETAS,
+        clock_multiplier=clock_multiplier,
+        initial_state=initial_state,
+        ramp=ramp,
+        PHI_off=[], 
+        PHI_on=[]
+    )
     
     if PLOT:
         plt.ion()
@@ -895,17 +2034,6 @@ def main():
         # Store Bloch vector history for trail
         bx_hist, by_hist, bz_hist = [], [], []
     
-    system = System(
-        subsystems=subsystems,
-        dcsquids=[],
-        EC_matrix=EC_matrix,
-        thetas=THETAS,
-        clock_multiplier=clock_multiplier,
-        initial_state=initial_state,
-        ramp=ramp,
-        PHI_off=[], 
-        PHI_on=[]
-    )
     
     # Target Unitary rotation
     theta_target = np.pi/2
@@ -915,7 +2043,7 @@ def main():
     
     U_TARGET = get_RY_target(theta_target)
 
-    for i in range(1):
+    for i in range(4):
         system.state.reset_accumulated_unitary() 
         
         system.RY(k=k, theta_target=theta_target)
@@ -973,10 +2101,10 @@ def main():
             
             u = np.linspace(0, 2 * np.pi, 30)
             v = np.linspace(0, np.pi, 20)
-            x = np.outer(np.cos(u), np.sin(v))
-            y = np.outer(np.sin(u), np.sin(v))
-            z = np.outer(np.ones(u.size), np.cos(v))
-            ax_bloch.plot_wireframe(x, y, z, alpha=0.08, color='gray', linewidth=0.5)
+            x_mesh = np.outer(np.cos(u), np.sin(v))
+            y_mesh = np.outer(np.sin(u), np.sin(v))
+            z_mesh = np.outer(np.ones(u.size), np.cos(v))
+            ax_bloch.plot_wireframe(x_mesh, y_mesh, z_mesh, alpha=0.08, color='gray', linewidth=0.5)
             
             ax_bloch.plot([-1, 1], [0, 0], [0, 0], color='gray', linewidth=0.5, linestyle='--')
             ax_bloch.plot([0, 0], [-1, 1], [0, 0], color='gray', linewidth=0.5, linestyle='--')
@@ -1048,9 +2176,9 @@ def main():
             ax_fock.bar(np.arange(n_full), probabilities, color='steelblue')
             ax_fock.set_xlim(-0.5, n_full - 0.5)
             ax_fock.set_ylim(0, 1)
-            ax_fock.set_xlabel("Energy (Or Fock) State |n⟩", fontsize=12)
+            ax_fock.set_xlabel("Energy State |n⟩", fontsize=12)
             ax_fock.set_ylabel("Probability", fontsize=12)
-            ax_fock.set_title(f"Energy (Or Fock) Populations (kick # = {i:.4e} s)", fontsize=14)
+            ax_fock.set_title(f"Energy Populations", fontsize=14)
             
             fig.tight_layout()
             fig.canvas.draw()
@@ -1068,83 +2196,25 @@ if __name__=="__main__":
     main()
 
 
-================ LCResonatorCircuit.py ================
-from Circuit import Circuit
-from Branch import *
+================ ./simulations/multi_qubit_search.py ================
+import sys
+import os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-class LCResonatorCircuit(Circuit):
-    def __init__(self, gnd: Node, capacitance: float, inductance: float):
-        self.branches = []
-        self.island   = Node(branches=[])
-        
-        capacitor = Capacitor(
-            capacitance=capacitance,
-            nodes=[gnd, self.island]
-        )
-        
-        self.branches.append(capacitor)
-        self.island.branches.append(capacitor)
-        gnd.branches.append(capacitor)
-        
-        inductor = Inductor(
-            inductance=inductance,
-            nodes=[gnd, self.island]
-        )
-        
-        self.branches.append(inductor)
-        self.island.branches.append(inductor)
-        gnd.branches.append(inductor)
-        
-        self.graph = Graph(vertices=[gnd, self.island], edges=self.branches)
-        
-        super().__init__(graph=self.graph)
-
-
-================ Matrices.py ================
-import numpy as np
-
-I = np.eye(2)
-
-X = np.array([
-    [0, 1],
-    [1, 0]
-])
-
-Y = np.array([
-    [0, -1j],
-    [1j, 0]
-])
-
-Z = np.array([
-    [1, 0],
-    [0, -1]
-])
-
-CZ = np.array([
-    [1.0, 0.0, 0.0, 0.0],
-    [0.0, 1.0, 0.0, 0.0],
-    [0.0, 0.0, 1.0, 0.0],
-    [0.0, 0.0, 0.0, -1.0]
-])
-
-PAULI_MATRICES = [I, X, Y, Z]
-
-
-================ multi_qubit_search.py ================
 import numpy as np
 from scipy.linalg import expm
 import matplotlib.pyplot as plt
 
-from System import System
-from Transmon import Transmon
-from Operator import Operator
-from Wavefunction import Wavefunction
-from utils import *
-from constants import *
-from fidelity import *
+from quantum.System import System
+from quantum.Transmon import Transmon
+from quantum.Operator import Operator
+from quantum.Wavefunction import Wavefunction
+from quantum.utils import *
+from core.constants import *
+from quantum.fidelity import *
 from itertools import product
-from Circuit import Circuit
-from Quantize import quantize
+from core.Circuit import Circuit
+from core.Quantize import quantize
 
 def main():
     # ---- Shared Hyper-parameters ----
@@ -1299,274 +2369,28 @@ if __name__ == "__main__":
     main()
 
 
-================ Operator.py ================
-import numpy as np
-from typing import Optional
+================ ./simulations/multi_qubit.py ================
+import sys
+import os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from Matrices import PAULI_MATRICES
-
-class Operator():
-    """
-    An Operator is a matrix in a chosen basis
-    """
-    
-    def __init__(self, basis_to_matrix: dict):
-        self.basis_to_matrix = basis_to_matrix
-    
-    def get_projection(self, basis: str):
-        return self.basis_to_matrix[basis]
-    
-    def __getitem__(self, key):
-        return self.get_projection(basis=key)
-
-    def set_projection(self, basis: str, matrix: np.ndarray):
-        self.basis_to_matrix[basis] = matrix
-        
-    def __setitem__(self, key, value):
-        self.set_projection(basis=key, matrix=value)
-    
-    def __delitem__(self, key):
-        del self.basis_to_matrix[key]
-
-
-================ Quantize.py ================
-###############################################################################
-#
-#   quantization.py
-#
-#   Builds the quantum Hamiltonian in the charge or Fock basis, diagonalizes
-#   it, and transforms operators into the energy eigenbasis.
-#
-###############################################################################
-
-import numpy as np
-from constants import *
-from Transmon import Transmon
-from Circuit import Circuit
-from HarmonicOscillator import HarmonicOscillator
-
-
-def quantize(circuit: Circuit, n: int):
-    """
-    Parameters
-    ----------
-    circuit : Circuit
-        A fully constructed Circuit object.
-    n : int
-        Hilbert-space dimension: Cooper-pair numbers run from -n to +n
-        (charge basis), or Fock states 0..n_cut-1 (Fock basis).
-    """
-    EC_matrix = (e**2 / 2) * circuit.inv_capacitance_matrix
-    
-    systems = []
-    
-    if len(circuit.josephson_elements) > 0:
-        for k in range(len(circuit.josephson_elements)):
-            EJ    = circuit.josephson_elements[k].EJ
-            EC    = EC_matrix[k][k]
-            EJ_EC = EJ / EC
-            
-            systems.append(Transmon(
-                EC=EC,
-                EJ_EC=EJ_EC,
-                n=n
-            ))  
-    else:
-        systems.append(HarmonicOscillator(
-            capacitance=circuit.capacitance_matrix[0],
-            inductance=1/circuit.inv_inductance_matrix[0],
-            n_cut=n
-        ))
-        
-    return systems, EC_matrix
-
-
-
-================ QuantumOscillator.py ================
-import numpy as np
-
-from Operator import Operator
-
-class QuantumOscillator():
-    
-    def __init__(self):
-        pass
-    
-    @staticmethod
-    def create_ladder_operators(n_cut: int):
-        fock_annihilation_matrix = np.zeros((n_cut, n_cut))
-        
-        for m in range(n_cut):
-            for n in range(n_cut):
-                if m == (n-1):
-                    fock_annihilation_matrix[m][n] = np.sqrt(n)
-                    
-        annihilation = Operator(
-                        basis_to_matrix={"fock" : fock_annihilation_matrix}
-                        )
-                    
-        creation = Operator(
-                        basis_to_matrix={"fock" : fock_annihilation_matrix.conj().T}
-                        )
-                    
-        return annihilation, creation
-
-
-================ qubit_search.py ================
-import numpy as np
-from scipy.linalg import expm
-import matplotlib.pyplot as plt
-
-from System import System
-from Wavefunction import Wavefunction
-from utils import *
-from constants import *
-from fidelity import *
-from itertools import product
-from Circuit import Circuit
-from Quantize import quantize
-
-def main():
-    # ---- Shared Hyper-parameters ----
-    n_cut              = 201            # Number of charge states, -n_cut : n_cut
-    n_proj             = 7              # number of states to truncate to
-    clock_multiplier   = 8
-    ramp_options       = ["00000000", "10000000", "01000000", "00100000","11000000", "10100000", "01100000", "11100000"]
-
-    
-    # ---- Transmon Circuit Hyper-parameters ----
-    EJ_EC = 69
-    EC    = h * 250 * 1e6   # Charging energy [J]
-    theta = 0.03
-    
-    # ---- Derived Physical Constants ----
-    EJ      = EJ_EC * EC                 # [J]
-    C_T      = e**2 / (2 * EC)
-    
-    # ---- Graph Representation of the Circuit ----
-    graph_rep = {
-        'nodes': ['a'],
-        'capacitors': [
-            ('a', 'gnd', C_T),  # Shunt + Coupling Capacitance
-        ],
-        'inductors': [],
-        'josephson_elements': [
-            ('a', 'gnd', EJ),
-        ],
-        'external_flux': {}
-    }
-    
-    circuit = Circuit(graph_rep=graph_rep)
-    
-    n, n_zpf, creation, annihilation, H0, energies, energy_states, alpha, f_q, omega_q = quantize(circuit=circuit, n_cut=n_cut)
-    
-    print(f"n['energy'][:3, :3]")
-    print(n["energy"][:3, :3])
-    
-    # ---- Create Quantum States |0>, |1>, and the projector onto the computational subspace H_2 ----
-    zero_state = Wavefunction(basis_to_coefs={"energy" : np.array([1] + (n_proj - 1) * [0])})
-    one_state  = Wavefunction(basis_to_coefs={"energy" : np.array([0] + [1] + (n_proj - 2) * [0])})
-    
-    P_Q = Operator(
-        basis_to_matrix={"energy": np.outer(to_ket(zero_state["energy"]), to_bra(zero_state["energy"])) + np.outer(to_ket(one_state["energy"]), to_bra(one_state["energy"]))}
-    )
-    
-    # Search over ramps
-    best_fidelity = 0
-    best_ramp = None
-    best_N = None
-    
-    theta_target = np.pi/2
-    
-    N_base = int(np.round(theta_target / theta))
-
-    for N in range(N_base - 5, N_base + 5):
-        if best_fidelity >= 0.9999:
-            break
-        if N < 0:
-            continue
-        for ramp_length in range(1, 6):
-            if best_fidelity >= 0.9999:
-                break
-            for ramp in product(ramp_options, repeat=ramp_length):
-                if best_fidelity >= 0.9999:
-                    break
-                ramp = list(ramp)
-                
-                # ---- Creating Our Initial Quantum State in Energy/Fock Basis, |0> ----
-                initial_state = Wavefunction(basis_to_coefs={"energy" : zero_state["energy"].copy()})
-                    
-                # ---- Instantiate System Object ----
-                system = System(
-                    energy_states=energy_states,
-                    n=n,
-                    n_zpf=n_zpf,
-                    theta=theta,
-                    H0=H0,
-                    qubit_angular_frequency=omega_q,
-                    clock_multiplier=clock_multiplier,
-                    initial_state=initial_state,
-                    N=N,
-                    ramp=ramp
-                )
-                
-                RY_TARGET = Operator(
-                    basis_to_matrix={"energy": np.array([
-                            [np.cos(theta_target / 2), -np.sin(theta_target / 2)],
-                            [np.sin(theta_target / 2), np.cos(theta_target / 2)]
-                        ])}
-                )
-                                    
-                system.RY()
-                U = system.state.get_accumulated_unitary()
-                
-                U_Q_full = Operator(
-                    basis_to_matrix={"energy" : P_Q["energy"] @ U["energy"] @ P_Q["energy"]}
-                )                 
-                
-                U_Q = Operator(
-                    basis_to_matrix={"energy": U_Q_full["energy"][:2, :2]}
-                )
-                
-                L1 = get_L1(U=U_Q, basis="energy")
-                
-                process_fidelity = get_process_fidelity(U_Q=U_Q, U_target=RY_TARGET, basis="energy")
-                avg_gate_fidelity = get_average_gate_fidelity(process_fidelity=process_fidelity, L1=L1)
-                
-                if avg_gate_fidelity > best_fidelity:
-                    best_fidelity = avg_gate_fidelity
-                    best_ramp = ramp
-                    best_N = N
-                    print(f"New Best Fidelity: {avg_gate_fidelity}")
-                    print(f"N: {N}, Ramp: {ramp}")
-                    
-    
-    print(f"Best Ramp: {best_ramp}")
-    print(f"Best N: {best_N}")
-    print(f"Fidelity: {best_fidelity}")
-    
-if __name__=="__main__":
-    main()
-
-
-================ RY_multi_qubit.py ================
 import numpy as np
 from scipy.linalg import expm
 from scipy.linalg import ishermitian
 import matplotlib.pyplot as plt
 
-from System import System
-from Branch import *
-from Operator import Operator
-from Wavefunction import Wavefunction
-from Matrices import X, Y, Z
-from utils import *
-from constants import *
-from fidelity import *
-from Circuit import Circuit
-from Quantize import quantize
-from DCSQUID import DCSQUID
-from TransmonCircuit import TransmonCircuit
+from quantum.System import System
+from core.Branch import *
+from quantum.Operator import Operator
+from quantum.Wavefunction import Wavefunction
+from quantum.Matrices import X, Y, Z
+from quantum.utils import *
+from core.constants import *
+from quantum.fidelity import *
+from core.Circuit import Circuit
+from core.Quantize import quantize
+from circuits.DCSQUIDCircuit import DCSQUIDCircuit
+from circuits.TransmonCircuit import TransmonCircuit
 
 PLOT = True
 
@@ -1604,10 +2428,10 @@ def main():
     C_2e = 7.5 * 1e-15  # [F]
     
     # ---- Create Ground Node ----
-    gnd = Node(label="gnd", branches=[])
+    gnd = Node(branches=[])
     
     # ---- Create Nodes and Branches of Each DCSQUID Circuit (C_JL, C_JR are embedded in self C which comes from TransmonCircuit) ----
-    q1_dcsquid = DCSQUID(
+    q1_dcsquid = DCSQUIDCircuit(
         gnd=gnd,
         external_flux=PHI_off[0],
         left_josephson_current=J_1L,
@@ -1616,7 +2440,7 @@ def main():
         right_josephson_capacitance=0,
     )
     
-    qc_dcsquid = DCSQUID(
+    qc_dcsquid = DCSQUIDCircuit(
         gnd=gnd,
         external_flux=PHI_off[1],
         left_josephson_current=J_CL,
@@ -1625,7 +2449,7 @@ def main():
         right_josephson_capacitance=0,
     )
     
-    q2_dcsquid = DCSQUID(
+    q2_dcsquid = DCSQUIDCircuit(
         gnd=gnd,
         external_flux=PHI_off[2],
         left_josephson_current=J_2L,
@@ -1683,9 +2507,9 @@ def main():
     # ---- Build Matrices ----
     circuit.build()
     
-    transmons, EC_matrix = quantize(circuit=circuit, n=n)
+    subsystems, EC_matrix = quantize(circuit=circuit, n=n)
         
-    n_full = n_trunc ** len(transmons)
+    n_full = n_trunc ** len(subsystems)
     
     print(f"Full Hilbert space dimension: {n_full}")
     
@@ -1721,7 +2545,7 @@ def main():
         bx_hist, by_hist, bz_hist = [], [], []
              
     system = System(
-        transmons=transmons,
+        subsystems=subsystems,
         dcsquids=dcsquids,
         EC_matrix=EC_matrix,
         thetas=THETAS,
@@ -1925,24 +2749,28 @@ if __name__=="__main__":
     main()
 
 
-================ RY_single_qubit.py ================
+================ ./simulations/single_qubit.py ================
+import sys
+import os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 import numpy as np
 from scipy.linalg import expm
 from scipy.linalg import ishermitian
 import matplotlib.pyplot as plt
 
-from System import System
-from Operator import Operator
-from Wavefunction import Wavefunction
-from utils import *
-from constants import *
-from fidelity import *
-from Circuit import Circuit
-from Quantize import quantize
-from Branch import *
-from DCSQUID import DCSQUID
-from TransmonCircuit import TransmonCircuit
-from Matrices import X, Y, Z
+from quantum.System import System
+from quantum.Operator import Operator
+from quantum.Wavefunction import Wavefunction
+from quantum.utils import *
+from core.constants import *
+from quantum.fidelity import *
+from core.Circuit import Circuit
+from core.Quantize import quantize
+from core.Branch import *
+from circuits.DCSQUIDCircuit import DCSQUIDCircuit
+from circuits.TransmonCircuit import TransmonCircuit
+from quantum.Matrices import X, Y, Z
 
 
 
@@ -1955,7 +2783,7 @@ def main():
     THETAS             = np.array([0.03])
     clock_multiplier   = 8
     ramp               = ['01000000', '11000000', '10000000', '00000000', '00000000']
-    ramp               = []
+    # ramp               = []
     
     # ---- Transmon Circuit Hyper-parameters ----
     EJ_EC = 69
@@ -1963,8 +2791,6 @@ def main():
     
     # ---- Derived Physical Constants ----
     EJ    = EJ_EC * EC
-    JL    = EJ / (2 * REDUCED_FLUX_QUANTUM)
-    JR    = EJ / (2 * REDUCED_FLUX_QUANTUM)
     n_zpf = (1/2) * (EJ_EC / 2)**(1/4) # approximation
     BETAS = THETAS / (2 * n_zpf)        # approximation
     C     = e**2 / (2 * EC)            # includes Josephson Capacitance CJ
@@ -1972,14 +2798,14 @@ def main():
     C_S   = C - C_C
     
     # ---- Create Ground Node ----
-    gnd = Node(label="gnd", branches=[])
+    gnd = Node(branches=[])
     
     # ---- Create Nodes and Branches of Each DCSQUID Circuit (C_JL, C_JR are embedded in C_S) ----
-    q1_dcsquid = DCSQUID(
+    q1_dcsquid = DCSQUIDCircuit(
         gnd=gnd,
         external_flux=0,
-        left_josephson_current=JL,
-        right_josephson_current=JR,
+        left_josephson_energy=EJ,
+        right_josephson_energy=EJ,
         left_josephson_capacitance=0,
         right_josephson_capacitance=0,
     )
@@ -2001,9 +2827,9 @@ def main():
     # ---- Build Matrices ----
     circuit.build()
     
-    transmons, EC_matrix = quantize(circuit=circuit, n=n)
+    subsystems, EC_matrix = quantize(circuit=circuit, n=n)
         
-    n_full = n_trunc ** len(transmons)
+    n_full = n_trunc ** len(subsystems)
     
     print(f"Full Hilbert space dimension: {n_full}")
     
@@ -2033,7 +2859,7 @@ def main():
         bx_hist, by_hist, bz_hist = [], [], []
     
     system = System(
-        transmons=transmons,
+        subsystems=subsystems,
         dcsquids=[q1_dcsquid],
         EC_matrix=EC_matrix,
         thetas=THETAS,
@@ -2110,10 +2936,10 @@ def main():
             
             u = np.linspace(0, 2 * np.pi, 30)
             v = np.linspace(0, np.pi, 20)
-            x = np.outer(np.cos(u), np.sin(v))
-            y = np.outer(np.sin(u), np.sin(v))
-            z = np.outer(np.ones(u.size), np.cos(v))
-            ax_bloch.plot_wireframe(x, y, z, alpha=0.08, color='gray', linewidth=0.5)
+            x_mesh = np.outer(np.cos(u), np.sin(v))
+            y_mesh = np.outer(np.sin(u), np.sin(v))
+            z_mesh = np.outer(np.ones(u.size), np.cos(v))
+            ax_bloch.plot_wireframe(x_mesh, y_mesh, z_mesh, alpha=0.08, color='gray', linewidth=0.5)
             
             ax_bloch.plot([-1, 1], [0, 0], [0, 0], color='gray', linewidth=0.5, linestyle='--')
             ax_bloch.plot([0, 0], [-1, 1], [0, 0], color='gray', linewidth=0.5, linestyle='--')
@@ -2205,26 +3031,28 @@ if __name__=="__main__":
     main()
 
 
-================ squid_main.py ================
+================ ./simulations/squid.py ================
+import sys
+import os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 import numpy as np
 from scipy.linalg import expm
 from scipy.linalg import ishermitian
 import matplotlib.pyplot as plt
 
-from System import System
-from Operator import Operator
-from Wavefunction import Wavefunction
-from utils import *
-from constants import *
-from fidelity import *
-from Circuit import Circuit
-from Quantize import quantize
-from Branch import *
-from DCSQUID import DCSQUID
-from TransmonCircuit import TransmonCircuit
-from Matrices import X, Y, Z
-
-
+from quantum.System import System
+from quantum.Operator import Operator
+from quantum.Wavefunction import Wavefunction
+from quantum.utils import *
+from core.constants import *
+from quantum.fidelity import *
+from core.Circuit import Circuit
+from core.Quantize import quantize
+from core.Branch import *
+from circuits.DCSQUIDCircuit import DCSQUIDCircuit
+from circuits.TransmonCircuit import TransmonCircuit
+from quantum.Matrices import X, Y, Z
 
 PLOT = True
 
@@ -2255,7 +3083,7 @@ def main():
     gnd = Node(label="gnd", branches=[])
     
     # ---- Create Nodes and Branches of Each DCSQUID Circuit (C_JL, C_JR are embedded in C_S) ----
-    q1_dcsquid = DCSQUID(
+    dcsquid = DCSQUIDCircuit(
         gnd=gnd,
         external_flux=0,
         left_josephson_current=JL,
@@ -2485,316 +3313,28 @@ if __name__=="__main__":
     main()
 
 
-================ System.py ================
-from __future__ import annotations
-import numpy as np
-from scipy.linalg import expm
-import copy
+================ ./simulations/theta_phi_vs_time.py ================
+import sys
+import os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from Transmon import Transmon
-from Operator import Operator
-from Wavefunction import Wavefunction
-from constants import *
-from DCSQUID import DCSQUIDCircuit
-from QuantumOscillator import QuantumOscillator
-from HarmonicOscillator import HarmonicOscillator
-
-class System():
-    def __init__(self, subsystems: list[QuantumOscillator], dcsquids: list[DCSQUIDCircuit], EC_matrix: np.ndarray, thetas: np.ndarray, clock_multiplier: int, initial_state: Wavefunction, ramp: list[str], PHI_off: np.ndarray, PHI_on: np.ndarray):
-        self.subsystems    = subsystems
-        self.dcsquids      = dcsquids
-        self.EC_matrix     = EC_matrix
-        self.thetas        = thetas
-        self.M             = clock_multiplier
-        self.state         = initial_state  
-        self.ramp          = ramp
-        self.PHI_off       = PHI_off
-        self.PHI_on        = PHI_on
-        
-        self.n_charge      = len(self.subsystems[0].n["energy"])
-        self.n_full        = len(self.state["energy"]) # Dimension of full Hilbert space of the system
-        self.n_trunc       = int(round(self.n_full**(1/len(self.subsystems))))
-        
-        # ---- Derive Qubit and Clock Periods ----
-        self.T_q           = np.array([(2*np.pi) / s.angular_frequency for s in self.subsystems]) # Qubit period [s]
-        # We assume our computational qubits share the same angular frequency s.t. the clock period is well-defined
-        self.T_c           = self.T_q[0] / self.M                                                      # Clock period [s]
-        
-        # ---- Create New Subsystems Specifically For the System (Embedded in Larger Hilbert Space of Dimension n_full)
-        self.sys_subsystems = copy.deepcopy(self.subsystems)
-        
-        for k in range(len(self.subsystems)):
-            sys_subsystem = self.sys_subsystems[k]
-            
-            for op_label in list(sys_subsystem.operators.keys()):
-                
-                sys_subsystem.operators[op_label] = System.upgrade(
-                    operator=System.truncate(sys_subsystem.operators[op_label], self.n_trunc),
-                    n_trunc=self.n_trunc,
-                    idx=k,
-                    num_subsystems=len(self.subsystems)
-                )
-
-        # ---- Derive Kick Operators for Logical Qubits
-        self.transmon_to_kick = {}
-        
-        for k in range(len(self.subsystems)):
-            
-            if isinstance(self.subsystems[k], Transmon):
-                self.transmon_to_kick[k] = Operator(
-                            basis_to_matrix={"energy": expm(-1j * (thetas[k] / self.subsystems[k].r) / 2 * self.subsystems[k].n["energy"])}
-                        )
-            elif isinstance(self.subsystems[k], HarmonicOscillator):
-                self.transmon_to_kick[k] = Operator(
-                            basis_to_matrix={"energy": expm((self.thetas[k] / 2) * self.subsystems[k].n["energy"])}
-                        )
-            
-            self.transmon_to_kick[k] = System.truncate(
-                operator=self.transmon_to_kick[k],
-                n_trunc=self.n_trunc
-            )
-            
-            self.transmon_to_kick[k] = System.upgrade(
-                operator=self.transmon_to_kick[k],
-                n_trunc=self.n_trunc,
-                idx=k,
-                num_subsystems=len(self.subsystems)
-            )
-        
-        # ---- Derive Coupling Hamiltonain HC ----
-        coupling_sum = 0
-        for k in range(len(self.subsystems)):
-            for l in range(len(self.subsystems)):
-                if k == l:
-                    continue
-                else:   
-                    coupling_sum += (self.EC_matrix[k][l] * self.sys_subsystems[k].operators["n"]["energy"] @ self.sys_subsystems[l].operators["n"]["energy"])
-                
-        self.HC = Operator(
-            basis_to_matrix={"energy" : 4 * coupling_sum}
-        )
-        
-        # ---- Derive the Unperturbed Hamiltonian H0 ----
-        total_H0 = sum(self.sys_subsystems[j].operators["H0"]["energy"] for j in range(len(self.subsystems)))
-        self.H0 = Operator(
-            basis_to_matrix={"energy": total_H0 + self.HC["energy"]}
-        )
-        
-        # ---- For single qubit case ----
-        self.U_1 = Operator(
-            basis_to_matrix={"energy": expm(-1j * self.H0["energy"] * (1 * self.T_c) / hbar)}
-        )
-        
-        self.U_M = Operator(
-            basis_to_matrix={"energy": expm(-1j * self.H0["energy"] * (self.M * self.T_c) / hbar)}
-        )
-                        
-    def set_coupler_flux(self, k: int, EJ_new: float, n: int):
-        # ---- Create a new transmon with an updated josephson energy ----
-        new_transmon = Transmon(
-            EC=self.subsystems[k].EC,
-            EJ_EC=(EJ_new/self.subsystems[k].EC),
-            n=n
-        )
-        
-        # ---- Update sys_subsystems[k]'s operators with new_transmon's operators ----
-        for op_label, operator in new_transmon.operators.items():
-            self.sys_subsystems[k].operators[op_label] = System.upgrade(
-                operator=System.truncate(operator, self.n_trunc),
-                n_trunc=self.n_trunc,
-                idx=k,
-                num_subsystems=len(self.subsystems)
-            )
-            
-        # ---- Rebuild Coupling Hamiltonain HC ----
-        coupling_sum = 0
-        for i in range(len(self.subsystems)):
-            for j in range(len(self.subsystems)):
-                if i == j:
-                    continue
-                else:   
-                    coupling_sum += (self.EC_matrix[i][j] * self.sys_subsystems[i].operators["n"]["energy"] @ self.sys_subsystems[j].operators["n"]["energy"])
-                
-        self.HC = Operator(
-            basis_to_matrix={"energy" : 4 * coupling_sum}
-        )
-        
-        # ---- Rebuild the Unperturbed Hamiltonian H0 ----
-        total_H0 = sum(self.sys_subsystems[j].operators["H0"]["energy"] for j in range(len(self.subsystems)))
-        self.H0 = Operator(
-            basis_to_matrix={"energy": total_H0 + self.HC["energy"]}
-        )
-        
-        # ---- Rebuild free evolution unitaries ----
-        self.U_1 = Operator(
-            basis_to_matrix={"energy": expm(-1j * self.H0["energy"] * (1 * self.T_c) / hbar)}
-        )
-        
-        self.U_M = Operator(
-            basis_to_matrix={"energy": expm(-1j * self.H0["energy"] * (self.M * self.T_c) / hbar)}
-        )            
-        
-        
-    def free_evolve(self, clock_cycles: int):
-        self.state.apply(
-            operator=Operator(
-                {"energy": expm(-1j * self.H0["energy"] * (clock_cycles * self.T_c) / hbar)}
-                )
-            )
-
-    def RY(self, k: int, theta_target: float):
-        
-        self.on_ramp_evolve(k)
-        
-        N_kicks = int(np.round(theta_target/self.thetas[k]))
-                
-        for _ in range(N_kicks):
-            self.state.apply(self.transmon_to_kick[k])
-            
-            self.state.apply(self.U_M)
-        
-        self.off_ramp_evolve(k)
-        
-    def RX(self, k: int, theta_target: float):
-        
-        # RZ(pi/2)
-        for _ in range(int((1 * self.M) / 4)):
-            self.state.apply(self.U_1)
-        
-        # RY(theta_target)
-        self.RY(k, theta_target)
-        
-        # RZ(-pi/2) = RZ(3pi/2)
-        for _ in range(int((3 * self.M) / 4)):
-            self.state.apply(self.U_1)
-            
-    def fSim(self, duration):
-        self.set_coupler_flux(
-            k=1, 
-            EJ_new=DCSQUIDCircuit.calculate_effective_EJ(
-                PHI_ext=self.PHI_on[1], 
-                JL=self.dcsquids[1].J_L, 
-                JR=self.dcsquids[1].J_R
-                ),
-            n=self.n_charge
-            )
-        
-        for _ in range(int(round(duration / self.T_c))):
-            self.state.apply(self.U_1)
-            
-        self.set_coupler_flux(
-            k=1, 
-            EJ_new=DCSQUID.calculate_effective_EJ(
-                PHI_ext=self.PHI_off[1], 
-                JL=self.dcsquids[1].J_L, 
-                JR=self.dcsquids[1].J_R
-                ),
-            n=self.n_charge
-            )
-    
-    def CZ(self):
-        # Correspond to hold duration of 17 ns
-        theta = 0.7732102591991971
-        phi = -3.1294047493918216
-        
-        alpha = np.arcsin(np.sqrt(((1/2) - np.sin(phi/2)**2) / (np.sin(theta)**2 - np.sin(phi/2)**2)))
-        eta   = np.arctan((np.tan(alpha)*np.sin(theta)) / (np.sin(phi/2))) + ((np.pi/2) * (1 - np.sign(np.sin(phi/2))))
-        eps   = np.arctan((np.tan(alpha)*np.cos(theta)) / (np.cos(phi/2))) + ((np.pi/2) * (1 - np.sign(np.cos(phi/2))))
-        
-        self.RX(k=0, theta_target=eps)
-        self.RX(k=2, theta_target=eta)
-        
-        self.fSim(duration=17e-9)
-        
-        self.RX(k=0, theta_target=2*alpha)
-        
-        
-            
-    def on_ramp_evolve(self, k: int):
-    
-        for sequence in self.ramp:
-            for action in sequence:
-                if action == "0":
-                    # free evolve for a single clock cycle
-                    self.state.apply(self.U_1)
-                else:
-                    # kick
-                    self.state.apply(self.transmon_to_kick[k])
-
-                    # free evolve for a single clock cycle
-                    self.state.apply(self.U_1)
-
-    def off_ramp_evolve(self, k: int):
-        flipped_ramps = [self.flip_X_ramp(r) for r in self.ramp][::-1]
-        
-        for sequence in flipped_ramps:
-            for action in sequence:
-                if action == "0":
-                    # free evolve for a single clock cycle
-                    self.state.apply(self.U_1)
-                else:
-                    # kick
-                    self.state.apply(self.transmon_to_kick[k])
-
-                    # free evolve for a single clock cycle
-                    self.state.apply(self.U_1)
-
-    @staticmethod
-    def flip_X_ramp(ramp: str):
-        n = len(ramp)
-        flipped = ['0'] * n
-        for i in range(n):
-            if ramp[i] == '1':
-                new_pos = (n - i) % n
-                flipped[new_pos] = '1'
-        return ''.join(flipped)
-    
-    @staticmethod
-    def truncate(operator: Operator, n_trunc: int):
-        truncated_basis_to_matrix = {}
-        
-        for basis, matrix in operator.basis_to_matrix.items():
-            truncated_basis_to_matrix[basis] = matrix[:n_trunc, :n_trunc]
-        
-        return Operator(truncated_basis_to_matrix)
-    
-    @staticmethod
-    def upgrade(operator: Operator, n_trunc: int, idx: int, num_subsystems: int):
-        upgraded_basis_to_matrix = {}
-        
-        for basis, matrix in operator.basis_to_matrix.items():
-            upgraded_matrix = 1.0
-            
-            for k in range(num_subsystems): 
-                if k == idx:
-                    upgraded_matrix = np.kron(upgraded_matrix, matrix)
-                else:
-                    upgraded_matrix = np.kron(upgraded_matrix, np.eye(n_trunc))
-                    
-            upgraded_basis_to_matrix[basis] = upgraded_matrix
-                
-        return Operator(upgraded_basis_to_matrix)        
-
-
-================ theta_phi_vs_time.py ================
 import numpy as np
 from scipy.linalg import expm
 from scipy.linalg import ishermitian
 import matplotlib.pyplot as plt
 
-from System import System
-from Branch import *
-from Operator import Operator
-from Wavefunction import Wavefunction
-from Matrices import X, Y, Z
-from utils import *
-from constants import *
-from fidelity import *
-from Circuit import Circuit
-from Quantize import quantize
-from DCSQUID import DCSQUID
-from TransmonCircuit import TransmonCircuit
-from Matrices import CZ
+from quantum.System import System
+from core.Branch import *
+from quantum.Operator import Operator
+from quantum.Wavefunction import Wavefunction
+from quantum.Matrices import X, Y, Z, CZ
+from quantum.utils import *
+from core.constants import *
+from quantum.fidelity import *
+from core.Circuit import Circuit
+from core.Quantize import quantize
+from circuits.DCSQUIDCircuit import DCSQUIDCircuit
+from circuits.TransmonCircuit import TransmonCircuit
 
 PLOT = True
 
@@ -3022,281 +3562,130 @@ if __name__=="__main__":
     main()
 
 
-================ Transmon.py ================
+================ ./simulations/transmon_levels.py ================
+import sys
+import os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import copy
+
 import numpy as np
+from scipy.linalg import expm
+from scipy.linalg import ishermitian
+import matplotlib.pyplot as plt
 
-from QuantumOscillator import QuantumOscillator
-from Operator import Operator
-from constants import *   
-from utils import *
-        
-class Transmon(QuantumOscillator):
-    """
-    A Transmon system
-    """
-    def __init__(self, EC: float, EJ_EC: float, n: int):
-        self.EC = EC                       # Charging energy
-        self.EJ = EJ_EC * self.EC          # Josephson energy
-        self.r  = (1/2)*(EJ_EC / 2)**(1/4) # charge zero-point-fluctuation
-        
-        # Charge operator
-        self.n = Operator(
-            basis_to_matrix={"charge" : np.diag([n for n in range(int(-(n-1)/2), int((n-1)/2) + 1)])}
-        )   
-        
-        # Kinetic energy operator
-        self.T = Operator(
-            basis_to_matrix={"charge" : 4*EC*(self.n["charge"]**2)}
-        ) 
-        
-        # Potential energy operator
-        self.V = Operator(
-            basis_to_matrix={"charge" : create_upper_lower(value=-self.EJ / 2, dim=n)}
-        ) 
-        
-        # Unperturbed Hamiltonian operator
-        self.H0 = Operator(
-            basis_to_matrix={"charge" : self.T["charge"] + self.V["charge"]}
-            ) 
-    
-        # Diagonalize the Hamiltonian in the charge basis to get energy eigenvalues/eigenvectors
-        energies, energy_states = np.linalg.eigh(self.H0["charge"])
-        energy_states           = energy_states.astype(complex)
-    
-        # Unperturbed Hamiltonian operator in the energy basis
-        self.H0["energy"] = np.diag(energies)
-
-        self.anharmonicity           = (energies[2] - energies[1]) - (energies[1] - energies[0])
-        self.frequency               = (energies[1] - energies[0]) / h
-        self.angular_frequency       = self.qubit_frequency * (2*np.pi)
-    
-        # NOTE: I need to understand this better, Claude gave me this fix and I don't know why it works
-        # Fix eigenvector phases so that <psi_i|n|psi_{i+1}> is negative imaginary
-        for i in range(len(energies) - 1):
-            element = energy_states[:, i].conj() @ self.n["charge"] @ energy_states[:, i + 1]
-            if np.abs(element) > 1e-12:
-                phase = -1j * element / np.abs(element)
-                energy_states[:, i + 1] = phase * energy_states[:, i + 1]
-            
-        # Get n in the energy basis
-        self.n["energy"] = energy_states.conj().T @ self.n["charge"] @ energy_states
-        
-        self.operators = {
-            "n" : self.n,
-            "T" : self.T,
-            "V" : self.V,
-            "H0": self.H0,
-        }
-                       
-
-    
-    
-    
+from quantum.System import System
+from quantum.Wavefunction import Wavefunction
+from quantum.utils import *
+from core.constants import *
+from quantum.fidelity import *
+from core.Circuit import Circuit
+from core.Quantize import quantize
+from core.Branch import *
+from quantum.Matrices import X, Y, Z
+from circuits.DCSQUIDCircuit import DCSQUIDCircuit
+from circuits.TransmonCircuit import TransmonCircuit
 
 
-================ TransmonCircuit.py ================
-from Branch import Node, Capacitor
-from DCSQUID import DCSQUID
-from Branch import Graph
-
-class TransmonCircuit():
-    def __init__(self, gnd: Node, dcsquid: DCSQUID, shunt_capacitance: float, coupling_capacitance: float) -> None:
-        self.island = dcsquid.island
-        self.branches = list(dcsquid.branches)
-        
-        # Add a shunt capacitor
-        shunt_capacitor = Capacitor(capacitance=shunt_capacitance, nodes=[dcsquid.island, gnd])
-        
-        self.branches.append(shunt_capacitor)
-        self.island.branches.append(shunt_capacitor)
-        gnd.branches.append(shunt_capacitor)
-        
-        # Add a coupling capacitor
-        coupling_capacitor = Capacitor(capacitance=coupling_capacitance, nodes=[dcsquid.island, gnd])
-        
-        self.branches.append(coupling_capacitor)
-        self.island.branches.append(coupling_capacitor)
-        gnd.branches.append(coupling_capacitor)
-        
-        self.graph = Graph(vertices=[gnd, dcsquid.island], edges=self.branches)
-        
-        
-
-
-================ utils.py ================
-import numpy as np
-
-from Matrices import PAULI_MATRICES
-from Operator import Operator
-
-def get_spherical_coords(alpha, beta):
-    norm = np.sqrt(np.abs(alpha)**2 + np.abs(beta)**2)
-    alpha = alpha / norm
-    beta = beta / norm
+def main():
+    # ---- Shared Hyper-parameters ----
+    n                  = 201            # Number of charge states, -n/2 : n/2 for each transmon
+    n_trunc            = 7              # number of states to truncate to for each transmon
+    THETAS             = np.array([0.03])
+    clock_multiplier   = 8
+    ramp               = ['01000000', '11000000', '10000000', '00000000', '00000000']
+    # ramp               = []
     
-    phi = np.arctan2(alpha.imag, alpha.real)
-    tau = np.arctan2(beta.imag, beta.real)
+    # ---- Transmon Circuit Hyper-parameters ----
+    EJ_EC = 69
+    EC    = h * 250 * 1e6   # Charging energy [J]
     
-    azimuth = phi - tau
+    # ---- Derived Physical Constants ----
+    EJ    = EJ_EC * EC
+    JL    = EJ / (2 * REDUCED_FLUX_QUANTUM)
+    JR    = EJ / (2 * REDUCED_FLUX_QUANTUM)
+    n_zpf = (1/2) * (EJ_EC / 2)**(1/4) # approximation
+    BETAS = THETAS / (2 * n_zpf)        # approximation
+    C     = e**2 / (2 * EC)            # includes Josephson Capacitance CJ
+    C_C   = (BETAS[0] * hbar * C) / FLUX_QUANTUM
+    C_S   = C - C_C
     
-    inclination = 2 * np.arccos(np.clip(np.abs(alpha), -1, 1))
+    # ---- Create Ground Node ----
+    gnd = Node(branches=[])
     
-    return azimuth, inclination
-    
-    
-def get_rectangular_coords(azimuth, inclination):
-    x = np.sin(inclination) * np.cos(azimuth)
-    y = np.sin(inclination) * np.sin(azimuth)
-    z = np.cos(inclination)
-    
-    return x, y, z
-
-def create_upper_lower(value: float, dim: int):
-    matrix = np.zeros((dim, dim))
-    
-    for i in range(dim):
-        for j in range(dim):
-            if (i + 1) == j:
-                matrix[i][j] = value
-            elif (i - 1) == j:
-                matrix[i][j] = value
-                
-    return matrix
-
-def extract_relative_phase(U: np.ndarray):
-    if len(U) != 2:
-        print(f"Only works for 2x2 unitaries")
-        return
-    
-    alpha = U[0][0]
-    beta = U[1][1]
-    
-    phi = np.angle(beta) - np.angle(alpha)
-    
-    return phi
-
-def vector_change_basis(transformation_matrix: np.ndarray, vector: np.ndarray):
-    return transformation_matrix.conj().T @ vector
-
-def matrix_change_basis(transformation_matrix: np.ndarray, matrix: np.ndarray):
-    return transformation_matrix.conj().T @ matrix @ transformation_matrix
-
-def fock_to_phase(self, fock_coefs, phases: np.ndarray):
-    N = len(fock_coefs)
-    K = len(phases)
-    
-    linear_map = np.zeros((K, N), dtype=complex)
-    
-    for k in range(K):
-        phase = phases[k]
-        for n in range(N):
-            linear_map[k][n] = np.exp(-1j * n * phase) / np.sqrt(2*np.pi)
-            
-    return vector_change_basis(transformation_matrix=linear_map, vector=fock_coefs)
-    
-def to_ket(coefs: np.ndarray):
-    return coefs.reshape(-1, 1)
-
-def to_bra(coefs: np.array):
-    return np.array([c.conj() for c in coefs])
-
-def get_pauli_coefs(U: np.ndarray, basis: str):
-        if U[basis].shape != (2, 2):
-            raise Exception("Matrix is Not (2 x 2)")
-
-        coefs = np.zeros(len(PAULI_MATRICES), dtype=complex)
-    
-        for idx, matrix in enumerate(PAULI_MATRICES):
-            coefs[idx] = np.trace(matrix @ U[basis]) / 2
-            
-        return coefs
-
-def get_RY_target(theta_target: float):
-    RY_TARGET = Operator(
-        basis_to_matrix={"energy": np.array([
-                [np.cos(theta_target / 2), -np.sin(theta_target / 2)],
-                [np.sin(theta_target / 2), np.cos(theta_target / 2)]
-            ])}
+    # ---- Create Nodes and Branches of Each DCSQUID Circuit (C_JL, C_JR are embedded in C_S) ----
+    q1_dcsquid = DCSQUIDCircuit(
+        gnd=gnd,
+        external_flux=0,
+        left_josephson_current=JL,
+        right_josephson_current=JR,
+        left_josephson_capacitance=0,
+        right_josephson_capacitance=0,
     )
-    return RY_TARGET
-
-def get_RX_target(theta_target: float):
-    RX_TARGET = Operator(
-        basis_to_matrix={"energy": np.array([
-                [np.cos(theta_target / 2), -1j * np.sin(theta_target / 2)],
-                [-1j * np.sin(theta_target / 2), np.cos(theta_target / 2)]
-            ])}
+    
+    # ---- Create Transmon Circuit by Adding a Shunt Capacitor Branch ----
+    q1 = TransmonCircuit(
+        gnd=gnd,
+        dcsquid=q1_dcsquid,
+        shunt_capacitance=C_S,
+        coupling_capacitance=C_C
     )
-    return RX_TARGET
 
-def get_fSim_target(theta: float, phi: float):
-    a = np.cos(theta)
-    b = -1j * np.sin(theta)
-    c = np.exp(-1j * phi)
+    # ---- Create the Larger Circuit Graph Object (G = (V, E)) ----
+    circuit_graph = Graph(vertices=[gnd, q1.island], edges=q1.branches)
     
-    fSim_TARGET = Operator(
-        basis_to_matrix={"energy" : np.array([
-                [1.0, 0.0, 0.0, 0.0],
-                [0.0, a, b, 0.0],
-                [0.0, b, a, 0.0],
-                [0.0, 0.0, 0.0, c]
-            ])}
-    )
-    return fSim_TARGET
-
-
-
-
-================ Wavefunction.py ================
-from __future__ import annotations
-from typing import Optional
-import numpy as np
-
-from Operator import Operator
-class Wavefunction():
-    """
-    A wavefunction is a vector in a complex vector space,
-    along with a specified basis
-    """
+    # ---- Create Circuit Object From Graph ----
+    circuit = Circuit(circuit_graph)
     
-    def __init__(self, basis_to_coefs: dict):
-        self.basis_to_coefs = basis_to_coefs
-        
-        self.U = Operator({})
-        
-        for basis, coefs in basis_to_coefs.items():
-            self.U[basis] = np.eye(len(coefs))
-        
-    def get_projection(self, basis: str):
-        return self.basis_to_coefs[basis]
+    # ---- Build Matrices ----
+    circuit.build()
     
-    def __getitem__(self, key):
-        return self.get_projection(basis=key)
+    subsystems, EC_matrix = quantize(circuit=circuit, n=n)
     
-    def set_projection(self, basis: str, coefs: np.ndarray):
-        self.basis_to_coefs[basis] = coefs
+    transmon = subsystems[0]
         
-    def __setitem__(self, key, value):
-        self.set_projection(basis=key, coefs=value)
-        
-    def get_probabilities(self, basis: str):
-        return np.abs(self.basis_to_coefs[basis])**2
-            
-    def apply(self, operator: Operator):        
-        # Apply the operator to each basis representation of the wavefunction
-        for basis, coefs in self.basis_to_coefs.items():
-            self.basis_to_coefs[basis] = (operator[basis] @ coefs).flatten()
-            self.U[basis] = operator[basis] @ self.U[basis]
-        
-    def get_accumulated_unitary(self):
-        return self.U
+    n_full = n_trunc ** len(subsystems)
+    
+    print(f"Full Hilbert space dimension: {n_full}")
+    
+    n_plot = 7
 
-    def reset_accumulated_unitary(self):
-        for basis, coefs in self.U.basis_to_matrix.items():
-            self.U[basis] = np.eye(len(coefs))
-    
-    def __delitem__(self, key):
-        del self.basis_to_coefs[key]
+    wavefunctions = []
+    state = np.zeros(n)
+    state[0] = 1.0
+
+    for k in range(n_plot):
+        flux_coefs = vector_change_basis(transmon.flux_states, state)
+        wavefunctions.append(np.abs(flux_coefs)**2)
         
+        if k < n_plot - 1:
+            state = transmon.creation["fock"] @ state
+            state /= np.linalg.norm(state)
+
+    fig, ax = plt.subplots(figsize=(10, 8))
+
+    V = EJ * (1 - np.cos(transmon.fluxes / REDUCED_FLUX_QUANTUM))
+    E_shift = transmon.energies[0] + EJ
+
+    ax.plot(transmon.fluxes / REDUCED_FLUX_QUANTUM, V, color='black', linewidth=2)
+
+    for k in range(n_plot):
+        energy = transmon.energies[k] - transmon.energies[0] + E_shift
+        probs = wavefunctions[k]
+        scaled = probs / np.max(probs) * (transmon.energies[1] - transmon.energies[0]) * 0.35
+        ax.fill_between(transmon.fluxes / REDUCED_FLUX_QUANTUM, energy, energy + scaled, alpha=0.3)
+        ax.plot(transmon.fluxes / REDUCED_FLUX_QUANTUM, energy + scaled, linewidth=1.5, label=f"|{k}⟩")
+
+    ax.set_xlim(-np.pi, np.pi)
+    ax.set_ylim(0, transmon.energies[n_plot-1] - transmon.energies[0] + E_shift + EJ*0.1)
+    ax.set_xlabel("φ", fontsize=14)
+    ax.set_ylabel("Energy", fontsize=14)
+    ax.set_title("Transmon Eigenstates", fontsize=16)
+    ax.legend()
+    plt.tight_layout()
+    plt.show()
+
+
+if __name__=="__main__":
+    main()
 
 
