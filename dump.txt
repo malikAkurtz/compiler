@@ -120,12 +120,10 @@ class TransmonCircuit():
 LIVE_VISUALIZATION      = True
 OPTIMAL_DETUNING        = -3e6
 OPTIMAL_DETUNING        = 0
-OPTIMAL_AMPLITUDE_SCALE = 0.0048
-OPTIMAL_AMPLITUDE_SCALE = 0.045
+OPTIMAL_AMPLITUDE_SCALE = 0.01
 OPTIMAL_SIGMA           = 1.7e-11
-OPTIMAL_LAMBDA_DRAG     = 0.012
-NUM_PULSES              = 1000
-STEPS_PER_PERIOD        = 200
+NUM_PULSES              = 30
+STEPS_PER_PERIOD        = 1000
 
 
 
@@ -536,7 +534,7 @@ class HarmonicOscillator(QuantumOscillator):
     A Harmonic Oscillator is a type of System
     Important notes:
     1) In a harmonic oscillator, the fock basis and the energy basis are the same
-    2) a_dagger @ a = n = N, the number operator
+    2) a_dagger @ a = F, the number operator
     """
     def __init__(self, capacitance: float, inductance: float, n_cut: int):  
         self.C = capacitance
@@ -1252,7 +1250,7 @@ class Wavefunction():
 
 
 
-================ ./simulations/crank_nicolson.py ================
+================ ./simulations/crank_nicolson1.py ================
 import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -1294,35 +1292,39 @@ def main():
     EC    = h * fC
     C     = (e**2) / (2 * EC)
     CJ    = 0.05 * C
-    CS    = 0.95 * C
-    EJ    = EJ_EC * EC          # includes Josephson Capacitance CJ
+    CC    = 0.003 * C
+    CS    = C - CJ - CC
+    EJ    = EJ_EC * EC      
+    
+    # ---- Hyper-parameters for Naive Harmonic Oscillator Qubit ----
+    C          = 100e-15 # [F]
+    L          = 10e-9   # [H]
     
     # ---- Create Ground Node ----
     gnd = Node(branches=[])
     
-    # # ---- Create Nodes and Branches of Each DCSQUID Circuit (C_JL, C_JR are embedded in C_S) ----
-    # q1_dcsquid = DCSQUIDCircuit(
-    #     gnd=gnd,
-    #     external_flux=0,
-    #     left_josephson_energy=(EJ/2),
-    #     right_josephson_energy=(EJ/2),
-    #     left_josephson_capacitance=(CJ/2),
-    #     right_josephson_capacitance=(CJ/2),
-    # )
-    
-    # # ---- Create Transmon Circuit by Adding a Shunt Capacitor Branch ----
-    # q1 = TransmonCircuit(
-    #     gnd=gnd,
-    #     dcsquid=q1_dcsquid,
-    #     shunt_capacitance=CS,
-    #     coupling_capacitance=0
-    # )
-    
-    L          = 10e-9   # [H]
     lc_resonator = LCResonatorCircuit(
         gnd=gnd,
         capacitance=C,
         inductance=L
+    )
+    
+    # ---- Create Nodes and Branches of Each DCSQUID Circuit (C_JL, C_JR are embedded in C_S) ----
+    q1_dcsquid = DCSQUIDCircuit(
+        gnd=gnd,
+        external_flux=0,
+        left_josephson_energy=(EJ/2),
+        right_josephson_energy=(EJ/2),
+        left_josephson_capacitance=(CJ/2),
+        right_josephson_capacitance=(CJ/2),
+    )
+    
+    # ---- Create Transmon Circuit by Adding a Shunt Capacitor Branch ----
+    q1 = TransmonCircuit(
+        gnd=gnd,
+        dcsquid=q1_dcsquid,
+        shunt_capacitance=CS,
+        coupling_capacitance=CC
     )
 
     # ---- Create the Larger Circuit Graph Object (G = (V, E)) ----
@@ -1374,21 +1376,16 @@ def main():
     t_vec = np.arange(N_t) * dt.item()
     
     # Result arrays
-    At_vec = np.zeros(N_t)
+    Vt_vec = np.zeros(N_t)
     P_0    = np.zeros(N_t)
     P_1    = np.zeros(N_t)
     P_2    = np.zeros(N_t)
     
     # ---- Pulse Amplitude ----
-    A_0 = OPTIMAL_AMPLITUDE_SCALE * (system.energies[1] - system.energies[0])
+    V_0 = OPTIMAL_AMPLITUDE_SCALE * (system.energies[1] - system.energies[0])
     
     # ---- Pulse Centers ----
     pulse_centers = np.arange(NUM_PULSES) * T_drive
-    
-    # DRAG correction operator (σ_y-like in 1-2 subspace)
-    n_12_y = np.zeros((n, n), dtype=complex)
-    n_12_y[1, 2] = -1j * system.n["energy"][1, 2]
-    n_12_y[2, 1] =  1j * system.n["energy"][2, 1]
 
     # ---- Live Plot Setup ----
     update_interval = max(1, N_t // 500)
@@ -1419,15 +1416,13 @@ def main():
         mask = np.abs(dt_to_pulses) < 4 * OPTIMAL_SIGMA
 
         gauss    = np.exp(-0.5 * (dt_to_pulses[mask] / OPTIMAL_SIGMA)**2)
-        At       = A_0 * np.sum(gauss)
+        Vt       = V_0 * np.sum(gauss)
         
-        At_dot   = A_0 * np.sum(-dt_to_pulses[mask] / OPTIMAL_SIGMA**2 * gauss)
-        drag_coeff = 0.0 if np.isclose(alpha, 0.0) else OPTIMAL_LAMBDA_DRAG * At_dot / alpha
+        Vt_vec[i] = Vt
         
-        At_vec[i] = At
-        
+        # H = H0 + HD(t)
         H_mid = Operator(
-            basis_to_matrix={"energy" : system.H0["energy"] + At * system.n["energy"] + (drag_coeff * n_12_y)}
+            basis_to_matrix={"energy" : system.H0["energy"] + Vt * system.n["energy"]}
         )
         
         A_mat           = np.eye(n_trunc) + (1j * dt / (2 * hbar)) * H_mid["energy"][:n_trunc, :n_trunc]
@@ -1440,7 +1435,7 @@ def main():
 
         if LIVE_VISUALIZATION and i % update_interval == 0:
             t_ns_so_far = t_vec[:i+1] * 1e9
-            line_drive.set_data(t_ns_so_far, At_vec[:i+1] / (h * 1e9))
+            line_drive.set_data(t_ns_so_far, Vt_vec[:i+1] / (h * 1e9))
             line_p0.set_data(t_ns_so_far, P_0[:i+1])
             line_p1.set_data(t_ns_so_far, P_1[:i+1])
             line_p2.set_data(t_ns_so_far, P_2[:i+1])
@@ -1457,7 +1452,7 @@ def main():
     elif PLOT:
         t_ns = t_vec * 1e9
         fig, (ax1, ax2) = plt.subplots(2, 1, sharex=True, figsize=(12, 8))
-        ax1.plot(t_ns, At_vec / (h * 1e9), color="tab:blue", linewidth=2)
+        ax1.plot(t_ns, Vt_vec / (h * 1e9), color="tab:blue", linewidth=2)
         ax1.set_ylabel("Drive Amplitude (GHz)", fontsize=14)
         ax1.set_title("Crank-Nicolson SFQ Drive Simulation", fontsize=16)
         ax1.tick_params(labelsize=12)
@@ -1474,6 +1469,201 @@ def main():
         plt.show()
     
 
+if __name__=="__main__":
+    main()
+
+
+================ ./simulations/crank_nicolson2.py ================
+import sys
+import os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+import numpy as np
+import matplotlib.pyplot as plt
+import pandas as pd
+
+from quantum.Operator import Operator
+from quantum.Wavefunction import Wavefunction
+from quantum.utils import *
+from core.constants import *
+from quantum.fidelity import *
+from core.Circuit import Circuit
+from core.Quantize import quantize
+from core.Branch import *
+from circuits.DCSQUIDCircuit import DCSQUIDCircuit
+from circuits.TransmonCircuit import TransmonCircuit
+from config import *
+
+
+
+PLOT = True
+
+def main():
+    # ---- Shared Hyper-parameters ----
+    n                  = 21            # Number of charge states, -n/2 : n/2 for each transmon
+    n_trunc            = 6              # number of states to truncate to for each transmon
+    
+    # ---- Transmon Circuit Hyper-parameters ----
+    fC    = 250e6   # Charging energy frequency EC/h [Hz]
+    EJ_EC = 50      # EJ/EC ratio (typical transmon) (higher ratio ==> deeper cosine potential well)
+    
+    # ---- Derived Physical Constants ----
+    EC    = h * fC
+    C     = (e**2) / (2 * EC)
+    CJ    = 0.04 * C
+    CC    = 0.003 * C
+    CS    = C - CJ - CC
+    EJ    = EJ_EC * EC          
+    
+    # ---- Create Ground Node ----
+    gnd = Node(branches=[])
+    
+    # ---- Create Nodes and Branches of Each DCSQUID Circuit (C_JL, C_JR are embedded in C_S) ----
+    q1_dcsquid = DCSQUIDCircuit(
+        gnd=gnd,
+        external_flux=0,
+        left_josephson_energy=(EJ/2),
+        right_josephson_energy=(EJ/2),
+        left_josephson_capacitance=(CJ/2),
+        right_josephson_capacitance=(CJ/2),
+    )
+    
+    # ---- Create Transmon Circuit by Adding a Shunt Capacitor Branch ----
+    q1 = TransmonCircuit(
+        gnd=gnd,
+        dcsquid=q1_dcsquid,
+        shunt_capacitance=CS,
+        coupling_capacitance=CC
+    )
+
+    # ---- Create the Larger Circuit Graph Object (G = (V, E)) ----
+    circuit_graph = q1.graph
+    
+    # ---- Create Circuit Object From Graph ----
+    circuit = Circuit(circuit_graph)
+    
+    # ---- Build Matrices ----
+    circuit.build()
+    
+    subsystems, EC_matrix = quantize(circuit=circuit, n=n)
+    
+    system = subsystems[0]
+
+    n_full = n_trunc ** len(subsystems)
+    
+    print(f"Full Hilbert space dimension: {n_full}")
+    
+    # ---- Create individual Subsystem Quantum Basis States ----
+    z = Wavefunction(basis_to_coefs={"energy" : np.array([1] + (n_trunc - 1) * [0])})
+    o = Wavefunction(basis_to_coefs={"energy" : np.array([0] + [1] + (n_trunc - 2) * [0])})
+
+    # ---- Creating Our Initial Quantum State in energy basis, |0> ----
+    state = Wavefunction(basis_to_coefs={"energy" : z["energy"].copy()})
+    
+    # ---- Import Time-Voltage CSV
+    At = pd.read_csv("sfq_V_lookup.csv")
+    
+    t_vec = At["time_s"].to_numpy()
+    
+    At_vec = At["voltage_V"].to_numpy()
+    
+    N_t = len(t_vec)
+    
+     # ---- To Store Populations ----
+    P0 = np.zeros(N_t, dtype=float)
+    P1 = np.zeros(N_t, dtype=float)
+    P2 = np.zeros(N_t, dtype=float)
+    
+    dt = t_vec[1] - t_vec[0]
+
+    # ---- Live Plot Setup ----
+    update_interval = max(1, N_t // 500)
+    if LIVE_VISUALIZATION:
+        plt.ion()
+        fig, (ax1, ax2) = plt.subplots(2, 1, sharex=True, figsize=(12, 8))
+        ax1.set_ylabel("Voltage (μV)", fontsize=14)
+        ax1.set_title("Crank-Nicolson SFQ Drive Simulation", fontsize=16)
+        ax1.tick_params(labelsize=12)
+        ax2.set_xlabel("Time (ns)", fontsize=14)
+        ax2.set_ylabel("Population", fontsize=14)
+        ax2.set_ylim(-0.05, 1.05)
+        ax2.tick_params(labelsize=12)
+        line_drive, = ax1.plot([], [], color="tab:blue", linewidth=1.5)
+        line_p0,    = ax2.plot([], [], label="|0⟩", linewidth=1.5)
+        line_p1,    = ax2.plot([], [], label="|1⟩", linewidth=1.5)
+        line_p2,    = ax2.plot([], [], label="|2⟩", linestyle="--", linewidth=1.5)
+        ax2.legend(fontsize=13)
+        plt.tight_layout()
+        fig.canvas.draw()
+        fig.canvas.flush_events()
+
+    # ---- Crank-Nicolson Loop ----
+    for i, t in enumerate(t_vec):
+        if i == len(t_vec)-1:
+            break
+        
+        t_mid = t + (dt / 2)
+        
+        V_mid = (At_vec[i+1] + At_vec[i]) / 2
+                
+        # H = H0 + HD(t)
+        H_mid = Operator(
+            basis_to_matrix={"energy" : system.H0["energy"] + ((2*e) * (CC / C) * V_mid) * system.n["energy"]}
+        )
+        
+        A_mat           = np.eye(n_trunc) + (1j * dt / (2 * hbar)) * H_mid["energy"][:n_trunc, :n_trunc]
+        B_mat           = np.eye(n_trunc) - (1j * dt / (2 * hbar)) * H_mid["energy"][:n_trunc, :n_trunc]
+        state["energy"] = np.linalg.solve(A_mat, B_mat @ state["energy"])
+
+        P0[i] = state.get_probabilities("energy")[0]
+        P1[i] = state.get_probabilities("energy")[1]
+        P2[i] = state.get_probabilities("energy")[2]
+
+        if LIVE_VISUALIZATION and i % update_interval == 0:
+            t_ns_so_far = t_vec[:i+1] * 1e9
+            line_drive.set_data(t_ns_so_far, At_vec[:i+1] * 1e6)
+            line_p0.set_data(t_ns_so_far, P0[:i+1])
+            line_p1.set_data(t_ns_so_far, P1[:i+1])
+            line_p2.set_data(t_ns_so_far, P2[:i+1])
+            ax1.relim(); ax1.autoscale_view()
+            ax2.set_xlim(0, t_ns_so_far[-1] if len(t_ns_so_far) > 1 else 1)
+            fig.canvas.draw_idle()
+            fig.canvas.flush_events()
+    
+    
+    # ---- Final Plot ----
+    if LIVE_VISUALIZATION:
+        line_drive.set_data(t_vec * 1e9, At_vec * 1e6)
+        line_p0.set_data(t_vec * 1e9, P0)
+        line_p1.set_data(t_vec * 1e9, P1)
+        line_p2.set_data(t_vec * 1e9, P2)
+        ax1.relim(); ax1.autoscale_view()
+        ax2.set_xlim(0, t_vec[-1] * 1e9)
+        fig.canvas.draw_idle()
+        fig.canvas.flush_events()
+        plt.ioff()
+        fig.savefig("microwave_drive.png", dpi=150)
+        plt.show()
+    elif PLOT:
+        t_ns = t_vec * 1e9
+        fig, (ax1, ax2) = plt.subplots(2, 1, sharex=True, figsize=(12, 8))
+        ax1.plot(t_ns, At_vec * 1e6, color="tab:blue", linewidth=2)
+        ax1.set_ylabel("Voltage (μV)", fontsize=14)
+        ax1.set_title("Crank-Nicolson SFQ Drive Simulation", fontsize=16)
+        ax1.tick_params(labelsize=12)
+        ax2.plot(t_ns, P0, label="|0⟩", linewidth=2)
+        ax2.plot(t_ns, P1, label="|1⟩", linewidth=2)
+        ax2.plot(t_ns, P2, label="|2⟩", linestyle="--", linewidth=2)
+        ax2.set_xlabel("Time (ns)", fontsize=14)
+        ax2.set_ylabel("Population", fontsize=14)
+        ax2.legend(fontsize=13)
+        ax2.set_ylim(-0.05, 1.05)
+        ax2.tick_params(labelsize=12)
+        plt.tight_layout()
+        plt.savefig("microwave_drive.png", dpi=150)
+        plt.show()
+    
+    
 if __name__=="__main__":
     main()
 
@@ -2791,6 +2981,226 @@ def main():
     
 if __name__=="__main__":
     main()
+
+
+================ ./simulations/ramp_pulses.py ================
+import sys
+import os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+import numpy as np
+
+# Physical constants
+q      = 1.6e-19
+h_bar  = 1.05e-34
+factor = h_bar / (2 * q)
+
+# Qubit parameters
+omega_q = 2 * np.pi * 5e9
+alpha   = -2 * np.pi * 250e6
+T_q     = 2 * np.pi / omega_q      # qubit period, ~200 ps
+Tc      = T_q / 4                   # clock period (4x clock), ~50 ps
+
+# Kick angle (set by Cc/C and circuit params — use the value that matches your transmon sim)
+theta = 0.018  # radians per kick, matching CC = 0.003*C
+
+# Target gate
+theta_target = np.pi   # Ry(pi) = X gate
+
+# Number of train kicks
+N_train = int(round(theta_target / theta))
+print(f"Train kicks: {N_train}")
+
+# ---- DRAG ramp construction ----
+# Number of on-ramp qubit cycles (Shillito: 4-5 cycles optimal)
+n_ramp_cycles = 4
+
+# For each qubit cycle in the ramp, we choose from {0000, 1000, 0100, 1100}
+# 0000 = identity, 1000 = Ry(θ), 0100 = Rx(-θ), 1100 = Rx(-θ)Ry(θ)
+#
+# Optimal 4-cycle on-ramp for Ry(π) at 4x clock (from exhaustive search):
+# Each entry is a 4-bit pattern for one qubit cycle
+on_ramp  = ['0100', '1100', '0100', '1100']
+off_ramp = ['0010', '1010', '0010', '1010']  # Y-symmetric, X-antisymmetric
+
+# Build the full binary sequence
+full_sequence = []
+for pattern in on_ramp:
+    full_sequence.extend([int(b) for b in pattern])
+
+for _ in range(N_train):
+    full_sequence.extend([1, 0, 0, 0])  # resonant train: 1000
+
+for pattern in off_ramp:
+    full_sequence.extend([int(b) for b in pattern])
+
+# Convert binary sequence to time-voltage pairs
+# Each bit corresponds to one clock period Tc
+# A '1' means a kick (delta-function SFQ pulse), '0' means free evolution
+N_total = len(full_sequence)
+T_total = N_total * Tc
+
+print(f"Total clock slots: {N_total}")
+print(f"Total gate time: {T_total*1e9:.2f} ns")
+print(f"Ramp cycles: {n_ramp_cycles}")
+
+# Build a high-resolution time grid
+# Each SFQ pulse is modeled as a narrow Gaussian (width ~ 1 ps)
+sigma_pulse = 1e-12  # 1 ps pulse width
+dt_grid = sigma_pulse / 5  # resolve each pulse with ~5 points
+t_grid = np.arange(0, T_total, dt_grid)
+
+V_grid = np.zeros_like(t_grid)
+
+Phi0 = 2 * np.pi * factor
+
+for i, bit in enumerate(full_sequence):
+    if bit == 1:
+        t_kick = (i + 0.5) * Tc  # center of clock slot
+        # Gaussian approximation to delta: area = Phi_0
+        amplitude = Phi0 / (sigma_pulse * np.sqrt(2 * np.pi))
+        V_grid += amplitude * np.exp(-0.5 * ((t_grid - t_kick) / sigma_pulse) ** 2)
+
+# Verify total area
+area = np.trapezoid(V_grid, t_grid)
+n_kicks = sum(full_sequence)
+print(f"Total kicks: {n_kicks}")
+print(f"Total area: {area:.4e} V·s")
+print(f"Expected ({n_kicks} × Φ₀): {n_kicks * Phi0:.4e} V·s")
+print(f"Ratio: {area / (n_kicks * Phi0):.6f}")
+
+# Downsample to manageable CSV
+n_out = 200_000
+t_out = np.linspace(t_grid[0], t_grid[-1], n_out)
+V_out = np.interp(t_out, t_grid, V_grid)
+
+out_path = os.path.join(os.path.dirname(__file__), "sfq_V_lookup.csv")
+header = "time_s,voltage_V,current_A"
+I_dummy = np.zeros(n_out)
+np.savetxt(out_path, np.column_stack([t_out, V_out, I_dummy]),
+           delimiter=",", header=header, comments="", fmt="%.6e")
+
+print(f"Written: {out_path} ({n_out} rows)")
+
+
+================ ./simulations/sfq_pulses.py ================
+import sys
+import os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+import numpy as np
+from scipy.integrate import solve_ivp
+
+# Physical constants
+q      = 1.6e-19
+h_bar  = 1.05e-34
+factor = h_bar / (2 * q)   # = Phi0 / (2*pi)
+
+# Junction parameters
+Ic  = 1e-03
+C   = 5.7e-14
+Rn  = 4
+Rs  = 2
+res = 1/Rn + 1/Rs
+
+# Drive parameters
+Ibias      = 0.85 * Ic
+Ip         = 0.20 * Ic
+Npulses    = 105
+t_rec      = 1 / 5e9 
+rect_width = 5e-12
+
+Phi0         = 2 * np.pi * factor
+Ihigh        = Ibias + Ip
+tau_slip_est = Phi0 / (res * np.sqrt(Ihigh**2 - Ic**2))
+max_step     = tau_slip_est / 50
+
+
+def rectangular_pulse(t, t0):
+    return Ibias + Ip * float(t0 <= t <= t0 + rect_width)
+
+
+def rcsj(t, y, I_of_t):
+    I = I_of_t(t)
+    return [y[1],
+            I / (C * factor) - (Ic / (C * factor)) * np.sin(y[0]) - (res / C) * y[1]]
+
+
+def phase_event_2pi(phi_ref):
+    def event(t, y):
+        return (y[0] - phi_ref) - 2 * np.pi
+    event.terminal  = True
+    event.direction = +1
+    return event
+
+
+y0        = np.array([np.arcsin(Ibias / Ic), 0.0])
+t_pointer = 0.0
+
+t_segs = []
+y_segs = []
+I_segs = []
+t_events = []
+
+for k in range(Npulses):
+    t0      = t_pointer
+    I_pulse = lambda t, t0=t0: rectangular_pulse(t, t0)
+
+    sol = solve_ivp(
+        lambda t, y: rcsj(t, y, I_pulse),
+        [t0, t0 + rect_width + 10e-12],
+        y0,
+        method="RK45",
+        events=phase_event_2pi(y0[0]),
+        rtol=1e-10, atol=1e-13,
+        max_step=max_step,
+    )
+
+    if not sol.t_events[0].size:
+        raise RuntimeError(f"Pulse {k+1}: No 2π slip detected.")
+
+    te = sol.t_events[0][0]
+    ye = sol.y_events[0][0]
+    t_events.append(te)
+
+    t1 = sol.t; y1 = sol.y.T
+    if t_segs:
+        t1 = t1[1:]; y1 = y1[1:]
+    t_segs.append(t1); y_segs.append(y1)
+    I_segs.append(np.array([I_pulse(t) for t in t1]))
+
+    # Recovery
+    t2 = np.array([te, te + t_rec])
+    y2 = np.array([[ye[0], ye[1]], [np.arcsin(Ibias / Ic), 0.0]])
+
+    t_segs.append(t2[1:]); y_segs.append(y2[1:])
+    I_segs.append(np.array([Ibias]))
+
+    t_pointer = t2[-1]
+    y0 = np.array([np.arcsin(Ibias / Ic), 0.0])
+
+t_full = np.concatenate(t_segs)
+y_full = np.concatenate(y_segs)
+I_full = np.concatenate(I_segs)
+V      = factor * y_full[:, 1]
+
+area = np.trapezoid(V, t_full)
+print(f"Area: {area:.4e} V·s  |  Phi0: {factor*2*np.pi:.4e} V·s  |  ratio: {area/(factor*2*np.pi):.6f}")
+print(f"Raw solver points: {len(t_full)}")
+print(f"2π events at: {[f'{te:.4e} s' for te in t_events]}")
+
+# Downsample to a uniform 10 000-point grid for the lookup table
+t_grid = np.linspace(t_full[0], t_full[-1], 300_000)
+V_grid = np.interp(t_grid, t_full, V)
+I_grid = np.interp(t_grid, t_full, I_full)
+
+out_path = os.path.join(os.path.dirname(__file__), "sfq_V_lookup.csv")
+header = "time_s,voltage_V,current_A"
+np.savetxt(out_path, np.column_stack([t_grid, V_grid, I_grid]),
+           delimiter=",", header=header, comments="", fmt="%.6e")
+
+print(f"Lookup table written: {out_path}  ({len(t_grid)} rows)")
+
 
 
 ================ ./simulations/single_qubit.py ================

@@ -118,3 +118,37 @@ def get_fSim_target(theta: float, phi: float):
     )
     return fSim_TARGET
 
+def generate_sfq_pulses(steps_per_period: int, num_pulses: int, amplitude_scale: float, drive_period: float, pulse_width: float):
+    # ---- Total Simulation Time
+    total_time = num_pulses * drive_period
+    
+    # ---- Granularity ----
+    dt         =  drive_period / steps_per_period
+    
+    # ---- Total Time Steps in Simulation ----
+    total_time_steps = int(np.round((total_time / dt).item()))
+    
+    # ---- Time Vector ----
+    time = np.arange(total_time_steps) * dt.item()
+    
+    # ---- To Store V(t) ----
+    sfq_pulses = []
+    
+    # ---- Pulse Centers ----
+    pulse_centers = np.arange(num_pulses) * drive_period
+    
+    for i, t in enumerate(time):
+        # ---- Only include contributions within 4 standard deviations of pulse width ----
+        dt_to_pulses = t - pulse_centers
+        mask = np.abs(dt_to_pulses) < 4 * pulse_width
+        
+        # ---- Calculate the gaussian ----
+        gaussians   = np.exp(-0.5 * (dt_to_pulses[mask] / pulse_width)**2)
+        
+        # ---- Scale it by pulse_amplitude ----
+        voltage = amplitude_scale * np.sum(gaussians)
+        
+        sfq_pulses.append(voltage)
+        
+    return np.array(sfq_pulses)
+    
