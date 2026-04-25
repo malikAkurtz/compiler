@@ -104,7 +104,7 @@ print(f"Raw solver points: {len(t_full)}")
 print(f"2π events at: {[f'{te:.4e} s' for te in t_events]}")
 
 # Downsample to a uniform 10 000-point grid for the lookup table
-t_grid = np.linspace(t_full[0], t_full[-1], 300_000)
+t_grid = np.linspace(t_full[0], t_full[-1], 100_000)
 V_grid = np.interp(t_grid, t_full, V)
 I_grid = np.interp(t_grid, t_full, I_full)
 

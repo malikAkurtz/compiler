@@ -52,8 +52,8 @@ def main():
     q1_dcsquid = DCSQUIDCircuit(
         gnd=gnd,
         external_flux=0,
-        left_josephson_energy=EJ,
-        right_josephson_energy=EJ,
+        left_josephson_energy=EJ/2,
+        right_josephson_energy=EJ/2,
         left_josephson_capacitance=0,
         right_josephson_capacitance=0,
     )
