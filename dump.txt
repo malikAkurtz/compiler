@@ -20,7 +20,7 @@ class DCSQUIDCircuit(Circuit):
         # ---- Create capacitors ----
         for capacitance in [left_josephson_capacitance, right_josephson_capacitance]:
             if capacitance > 0:
-                capacitor = Capacitor(capacitance=capacitance, nodes=[self.island, self.gnd])
+                capacitor = Capacitor(capacitance=capacitance, nodes=[self.island, gnd])
                 
                 # Add capacitor to the DCSQUID
                 self.branches.append(capacitor)
@@ -119,11 +119,13 @@ class TransmonCircuit():
 ================ ./config.py ================
 LIVE_VISUALIZATION      = True
 OPTIMAL_DETUNING        = -3e6
+OPTIMAL_DETUNING        = 0
 OPTIMAL_AMPLITUDE_SCALE = 0.0048
+OPTIMAL_AMPLITUDE_SCALE = 0.045
 OPTIMAL_SIGMA           = 1.7e-11
 OPTIMAL_LAMBDA_DRAG     = 0.012
-NUM_PULSES              = 200
-STEPS_PER_PERIOD        = 50
+NUM_PULSES              = 1000
+STEPS_PER_PERIOD        = 200
 
 
 
@@ -526,7 +528,7 @@ import numpy as np
 
 from quantum.QuantumOscillator import QuantumOscillator
 from quantum.Operator import Operator
-from core.constants import hbar
+from core.constants import hbar, h, e
 from quantum.utils import *
         
 class HarmonicOscillator(QuantumOscillator):
@@ -536,29 +538,35 @@ class HarmonicOscillator(QuantumOscillator):
     1) In a harmonic oscillator, the fock basis and the energy basis are the same
     2) a_dagger @ a = n = N, the number operator
     """
-    def __init__(self, capacitance: float, inductance: float, n_cut: int):
-        self.capatiance                      = capacitance
-        self.angular_frequency               = angular_frequency = np.sqrt((1 / inductance) / capacitance) # [rad/s]
+    def __init__(self, capacitance: float, inductance: float, n_cut: int):  
+        self.C = capacitance
+        self.L = inductance
+        
+        self.angular_frequency = np.sqrt(1 / (self.C*self.L))    
+        self.frequency         = self.angular_frequency * 2 * np.pi
+        
         self.annihilation, self.creation     = QuantumOscillator.create_ladder_operators(n_cut=n_cut)
         
-        self.n                               = Operator(
+        self.F                               = Operator(
             basis_to_matrix={"fock" : self.creation["fock"] @ self.annihilation["fock"],}
         )
         
         # Hamiltonian opertator in the fock basis
         self.H0                              = Operator(
-            basis_to_matrix={"fock": hbar*angular_frequency*(self.n["fock"]+(0.5*np.eye(n_cut)))}
+            basis_to_matrix={"fock": hbar*self.angular_frequency*(self.F["fock"]+(0.5*np.eye(n_cut)))}
         )
         
         self.energies, self.energy_states    = np.linalg.eigh(self.H0["fock"])
         
-        self.n["energy"]            = self.energy_states.conj().T @ self.n["fock"] @ self.energy_states
+        self.anharmonicity           = (self.energies[2] - self.energies[1]) - (self.energies[1] - self.energies[0])
+        
+        self.F["energy"]            = self.energy_states.conj().T @ self.F["fock"] @ self.energy_states
         self.H0["energy"]           = np.diag(self.energies)
         self.creation["energy"]     = self.energy_states.conj().T @ self.creation["fock"] @ self.energy_states
         self.annihilation["energy"] = self.energy_states.conj().T @ self.annihilation["fock"] @ self.energy_states
         
         self.flux                               = Operator(
-            basis_to_matrix={"fock" : np.sqrt(hbar / (2*capacitance*angular_frequency)) * (self.creation["fock"] + self.annihilation["fock"])}
+            basis_to_matrix={"fock" : np.sqrt(hbar / (2*capacitance*self.angular_frequency)) * (self.creation["fock"] + self.annihilation["fock"])}
         )
         
         self.fluxes, self.flux_states = np.linalg.eigh(self.flux["fock"])
@@ -572,9 +580,16 @@ class HarmonicOscillator(QuantumOscillator):
                                         matrix=self.creation["fock"]
                                         )
         
+        self.n_zpf = (1 / (2*e)) * np.sqrt(hbar * self.angular_frequency * self.C / 2)
+        
+        self.n = Operator(
+            basis_to_matrix={"energy" : 1j*self.n_zpf*(self.creation["energy"] - self.annihilation["energy"])}
+        )
+        
         self.operators = {
-            "n" : self.n,
+            "F" : self.F,
             "H0": self.H0,
+            "n" : self.n
         }
 
 
@@ -1260,6 +1275,7 @@ from circuits.DCSQUIDCircuit import DCSQUIDCircuit
 from circuits.TransmonCircuit import TransmonCircuit
 from quantum.Matrices import X, Y, Z
 from config import *
+from circuits.LCResonatorCircuit import LCResonatorCircuit
 
 
 
@@ -1267,47 +1283,50 @@ PLOT = True
 
 def main():
     # ---- Shared Hyper-parameters ----
-    n                  = 201            # Number of charge states, -n/2 : n/2 for each transmon
-    n_trunc            = 7              # number of states to truncate to for each transmon
-    THETAS             = np.array([0.03])
-    clock_multiplier   = 8
-    ramp               = []
+    n                  = 21            # Number of charge states, -n/2 : n/2 for each transmon
+    n_trunc            = 6              # number of states to truncate to for each transmon
     
     # ---- Transmon Circuit Hyper-parameters ----
-    EJ_EC = 69
-    EC    = h * 250 * 1e6   # Charging energy [J]
+    fC    = 250e6   # Charging energy frequency EC/h [Hz]
+    EJ_EC = 50      # EJ/EC ratio (typical transmon) (higher ratio ==> deeper cosine potential well)
     
     # ---- Derived Physical Constants ----
-    EJ    = EJ_EC * EC
-    n_zpf = (1/2) * (EJ_EC / 2)**(1/4) # approximation
-    BETAS = THETAS / (2 * n_zpf)        # approximation
-    C     = e**2 / (2 * EC)            # includes Josephson Capacitance CJ
-    C_C   = (BETAS[0] * hbar * C) / FLUX_QUANTUM
-    C_S   = C - C_C
+    EC    = h * fC
+    C     = (e**2) / (2 * EC)
+    CJ    = 0.05 * C
+    CS    = 0.95 * C
+    EJ    = EJ_EC * EC          # includes Josephson Capacitance CJ
     
     # ---- Create Ground Node ----
     gnd = Node(branches=[])
     
-    # ---- Create Nodes and Branches of Each DCSQUID Circuit (C_JL, C_JR are embedded in C_S) ----
-    q1_dcsquid = DCSQUIDCircuit(
-        gnd=gnd,
-        external_flux=0,
-        left_josephson_energy=EJ,
-        right_josephson_energy=EJ,
-        left_josephson_capacitance=0,
-        right_josephson_capacitance=0,
-    )
+    # # ---- Create Nodes and Branches of Each DCSQUID Circuit (C_JL, C_JR are embedded in C_S) ----
+    # q1_dcsquid = DCSQUIDCircuit(
+    #     gnd=gnd,
+    #     external_flux=0,
+    #     left_josephson_energy=(EJ/2),
+    #     right_josephson_energy=(EJ/2),
+    #     left_josephson_capacitance=(CJ/2),
+    #     right_josephson_capacitance=(CJ/2),
+    # )
     
-    # ---- Create Transmon Circuit by Adding a Shunt Capacitor Branch ----
-    q1 = TransmonCircuit(
+    # # ---- Create Transmon Circuit by Adding a Shunt Capacitor Branch ----
+    # q1 = TransmonCircuit(
+    #     gnd=gnd,
+    #     dcsquid=q1_dcsquid,
+    #     shunt_capacitance=CS,
+    #     coupling_capacitance=0
+    # )
+    
+    L          = 10e-9   # [H]
+    lc_resonator = LCResonatorCircuit(
         gnd=gnd,
-        dcsquid=q1_dcsquid,
-        shunt_capacitance=C_S,
-        coupling_capacitance=C_C
+        capacitance=C,
+        inductance=L
     )
 
     # ---- Create the Larger Circuit Graph Object (G = (V, E)) ----
-    circuit_graph = Graph(vertices=[gnd, q1.island], edges=q1.branches)
+    circuit_graph = lc_resonator.graph
     
     # ---- Create Circuit Object From Graph ----
     circuit = Circuit(circuit_graph)
@@ -1317,8 +1336,8 @@ def main():
     
     subsystems, EC_matrix = quantize(circuit=circuit, n=n)
     
-    transmon = subsystems[0]
-        
+    system = subsystems[0]
+
     n_full = n_trunc ** len(subsystems)
     
     print(f"Full Hilbert space dimension: {n_full}")
@@ -1331,10 +1350,10 @@ def main():
     state = Wavefunction(basis_to_coefs={"energy" : z["energy"].copy()})
     
     # ---- Transmon Anharmonicity ----
-    alpha = transmon.anharmonicity / hbar
+    alpha = system.anharmonicity
     
     # ---- Qubit Frequency ----
-    f_q     = transmon.frequency
+    f_q     = system.frequency
     
     # ---- Drive Frequency ----
     f_d     = f_q + OPTIMAL_DETUNING
@@ -1349,10 +1368,10 @@ def main():
     dt      =  T_drive / STEPS_PER_PERIOD
     
     # ---- Total Number of Steps ----
-    N_t     = round (T / dt)
+    N_t = int(np.round((T / dt).item()))
     
     # ---- Time Vector ----
-    t_vec   = np.arange(N_t) * dt
+    t_vec = np.arange(N_t) * dt.item()
     
     # Result arrays
     At_vec = np.zeros(N_t)
@@ -1361,16 +1380,37 @@ def main():
     P_2    = np.zeros(N_t)
     
     # ---- Pulse Amplitude ----
-    A_0 = OPTIMAL_AMPLITUDE_SCALE * (transmon.energies[1] - transmon.energies[0])
+    A_0 = OPTIMAL_AMPLITUDE_SCALE * (system.energies[1] - system.energies[0])
     
     # ---- Pulse Centers ----
     pulse_centers = np.arange(NUM_PULSES) * T_drive
     
     # DRAG correction operator (σ_y-like in 1-2 subspace)
     n_12_y = np.zeros((n, n), dtype=complex)
-    n_12_y[1, 2] = -1j * transmon.n["energy"][1, 2]
-    n_12_y[2, 1] =  1j * transmon.n["energy"][2, 1]
-    
+    n_12_y[1, 2] = -1j * system.n["energy"][1, 2]
+    n_12_y[2, 1] =  1j * system.n["energy"][2, 1]
+
+    # ---- Live Plot Setup ----
+    update_interval = max(1, N_t // 500)
+    if LIVE_VISUALIZATION:
+        plt.ion()
+        fig, (ax1, ax2) = plt.subplots(2, 1, sharex=True, figsize=(12, 8))
+        ax1.set_ylabel("Drive Amplitude (GHz)", fontsize=14)
+        ax1.set_title("Crank-Nicolson SFQ Drive Simulation", fontsize=16)
+        ax1.tick_params(labelsize=12)
+        ax2.set_xlabel("Time (ns)", fontsize=14)
+        ax2.set_ylabel("Population", fontsize=14)
+        ax2.set_ylim(-0.05, 1.05)
+        ax2.tick_params(labelsize=12)
+        line_drive, = ax1.plot([], [], color="tab:blue", linewidth=1.5)
+        line_p0,    = ax2.plot([], [], label="|0⟩", linewidth=1.5)
+        line_p1,    = ax2.plot([], [], label="|1⟩", linewidth=1.5)
+        line_p2,    = ax2.plot([], [], label="|2⟩", linestyle="--", linewidth=1.5)
+        ax2.legend(fontsize=13)
+        plt.tight_layout()
+        fig.canvas.draw()
+        fig.canvas.flush_events()
+
     # ---- Crank-Nicolson Loop ----
     for i, t in enumerate(t_vec):
         t_mid = t + (dt / 2)
@@ -1379,7 +1419,7 @@ def main():
         mask = np.abs(dt_to_pulses) < 4 * OPTIMAL_SIGMA
 
         gauss    = np.exp(-0.5 * (dt_to_pulses[mask] / OPTIMAL_SIGMA)**2)
-        At       = A_0 * np.sum(gauss) * (1/ (2 *n_zpf))
+        At       = A_0 * np.sum(gauss)
         
         At_dot   = A_0 * np.sum(-dt_to_pulses[mask] / OPTIMAL_SIGMA**2 * gauss)
         drag_coeff = 0.0 if np.isclose(alpha, 0.0) else OPTIMAL_LAMBDA_DRAG * At_dot / alpha
@@ -1387,7 +1427,7 @@ def main():
         At_vec[i] = At
         
         H_mid = Operator(
-            basis_to_matrix={"energy" : transmon.H0["energy"] + At * transmon.n["energy"] + (drag_coeff * n_12_y)}
+            basis_to_matrix={"energy" : system.H0["energy"] + At * system.n["energy"] + (drag_coeff * n_12_y)}
         )
         
         A_mat           = np.eye(n_trunc) + (1j * dt / (2 * hbar)) * H_mid["energy"][:n_trunc, :n_trunc]
@@ -1397,18 +1437,30 @@ def main():
         P_0[i] = state.get_probabilities("energy")[0]
         P_1[i] = state.get_probabilities("energy")[1]
         P_2[i] = state.get_probabilities("energy")[2]
-    
-    # ---- Plotting ----
-    if PLOT:
+
+        if LIVE_VISUALIZATION and i % update_interval == 0:
+            t_ns_so_far = t_vec[:i+1] * 1e9
+            line_drive.set_data(t_ns_so_far, At_vec[:i+1] / (h * 1e9))
+            line_p0.set_data(t_ns_so_far, P_0[:i+1])
+            line_p1.set_data(t_ns_so_far, P_1[:i+1])
+            line_p2.set_data(t_ns_so_far, P_2[:i+1])
+            ax1.relim(); ax1.autoscale_view()
+            ax2.set_xlim(0, t_ns_so_far[-1] if len(t_ns_so_far) > 1 else 1)
+            fig.canvas.draw_idle()
+            fig.canvas.flush_events()
+
+    # ---- Final Plot ----
+    if LIVE_VISUALIZATION:
+        plt.ioff()
+        plt.savefig("microwave_drive.png", dpi=150)
+        plt.show()
+    elif PLOT:
         t_ns = t_vec * 1e9
-
         fig, (ax1, ax2) = plt.subplots(2, 1, sharex=True, figsize=(12, 8))
-
         ax1.plot(t_ns, At_vec / (h * 1e9), color="tab:blue", linewidth=2)
         ax1.set_ylabel("Drive Amplitude (GHz)", fontsize=14)
-        ax1.set_title("Crank-Nicolson Microwave Drive Simulation", fontsize=16)
+        ax1.set_title("Crank-Nicolson SFQ Drive Simulation", fontsize=16)
         ax1.tick_params(labelsize=12)
-
         ax2.plot(t_ns, P_0, label="|0⟩", linewidth=2)
         ax2.plot(t_ns, P_1, label="|1⟩", linewidth=2)
         ax2.plot(t_ns, P_2, label="|2⟩", linestyle="--", linewidth=2)
@@ -1417,19 +1469,11 @@ def main():
         ax2.legend(fontsize=13)
         ax2.set_ylim(-0.05, 1.05)
         ax2.tick_params(labelsize=12)
-
         plt.tight_layout()
         plt.savefig("microwave_drive.png", dpi=150)
         plt.show()
     
-    
-    
-    
 
-        
-
-        
-    
 if __name__=="__main__":
     main()
 
