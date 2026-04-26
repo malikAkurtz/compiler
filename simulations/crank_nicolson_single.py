@@ -17,6 +17,7 @@ from core.Branch import *
 from circuits.DCSQUIDCircuit import DCSQUIDCircuit
 from circuits.TransmonCircuit import TransmonCircuit
 from config import *
+from quantum.System import System
 
 def main():
     # ---- Shared Hyper-parameters ----
@@ -37,16 +38,6 @@ def main():
       
     # ---- Create Ground Node ----
     gnd = Node(branches=[])
-    
-    # # ---- Hyper-parameters for Naive Harmonic Oscillator Qubit ----
-    # C          = 100e-15 # [F]
-    # L          = 10e-9   # [H]
-    
-    # lc_resonator = LCResonatorCircuit(
-    #     gnd=gnd,
-    #     capacitance=C,
-    #     inductance=L
-    # )
     
     # ---- Create Nodes and Branches of Each DCSQUID Circuit (C_JL, C_JR are embedded in C_S) ----
     q1_dcsquid = DCSQUIDCircuit(
@@ -75,7 +66,7 @@ def main():
     # ---- Build Matrices ----
     circuit.build()
     
-    subsystems, EC_matrix = quantize(circuit=circuit, n=n)
+    subsystems, EC_matrix, C_matrix = quantize(circuit=circuit, n=n)
     
     system = subsystems[0]
 
