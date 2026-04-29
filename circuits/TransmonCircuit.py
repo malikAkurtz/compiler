@@ -3,8 +3,11 @@ from circuits.DCSQUIDCircuit import DCSQUIDCircuit
 
 class TransmonCircuit():
     def __init__(self, gnd: Node, dcsquid: DCSQUIDCircuit, shunt_capacitance: float, coupling_capacitance: float) -> None:
+        self.dcquid = dcsquid
+        
         self.island = dcsquid.island
         self.branches = list(dcsquid.branches)
+        self.CC = coupling_capacitance
         
         # Add a shunt capacitor
         shunt_capacitor = Capacitor(capacitance=shunt_capacitance, nodes=[dcsquid.island, gnd])

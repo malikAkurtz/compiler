@@ -29,10 +29,10 @@ def main():
     PHI_on  = np.array([0.130, 0.352, 0.130]) * FLUX_QUANTUM
     
     J_1L = 7 * 1e-9  # [nA]
-    J_2L = 7 * 1e-9  # [nA]
+    J_2L = 5 * 1e-9  # [nA]
     
     J_1R = 21 * 1e-9 # [nA]
-    J_2R = 21 * 1e-9 # [nA]
+    J_2R = 15 * 1e-9 # [nA]
     
     J_CL = 18 * 1e-9 # [nA]
     J_CR = 36 * 1e-9 # [nA]
@@ -175,7 +175,7 @@ def main():
     ################ ANALYTICAL GUASSIAN MODEL OF SFQ PULSES ################
     
     # ---- Qubit Frequency ----
-    f_01 = system.subsystems[k].frequency
+    f_01 = system.dressed_frequencies[k]
     
     # ---- Drive Frequency ----
     f_drive = f_01 + OPTIMAL_DETUNING
@@ -221,6 +221,7 @@ def main():
     # Vt_vec = Vt_df["voltage_V"].to_numpy()
     
     ########################################################################
+    
 
     # ---- Crank-Nicolson ----
     P = system.crank_nicolson(

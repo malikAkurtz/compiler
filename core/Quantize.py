@@ -46,4 +46,4 @@ def quantize(circuit: Circuit, n: int):
             n_cut=n
         ))
         
-    return systems, EC_matrix
+    return systems, EC_matrix, circuit.capacitance_matrix

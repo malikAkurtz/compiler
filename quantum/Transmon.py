@@ -65,9 +65,6 @@ class Transmon(QuantumOscillator):
         
         self.fluxes, self.flux_states = np.linalg.eigh(self.flux["fock"])
         
-        self.annihilation["energy"] = self.annihilation["fock"]
-        self.creation["energy"]     = self.annihilation["fock"]
-        
         self.annihilation["flux"] = matrix_change_basis(
                                         transformation_matrix=self.flux_states, 
                                         matrix=self.annihilation["fock"]
